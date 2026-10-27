@@ -1,0 +1,65 @@
+{
+  "name": "@luoyi-dsh/instagram-scroll",
+  "version": "1.0.0",
+  "description": "DeepSeek Harness (DSH) Instagram 動態滾動瀏覽與探索插件：提供動態牆無限滾動、探索摘要與即時互動能力",
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "instagram",
+    "scroll",
+    "feed"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "main": "dist/index.js",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-settings-plugins"
+      ]
+    }
+  },
+  "exports": {
+    ".": "./dist/index.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "client.js",
+    "cordis.patch.yml",
+    "!**/data/**"
+  ],
+  "scripts": {
+    "build": "node ../dsh-instagram-plugin/node_modules/typescript/bin/tsc",
+    "watch": "node ../dsh-instagram-plugin/node_modules/typescript/bin/tsc -w"
+  },
+  "dependencies": {
+    "@deepseek-ai/schemastery": "^3.18.5",
+    "dotenv": "^16.4.7",
+    "@luoyi-dsh/instagram-mcp": "^1.0.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*",
+    "cordis": "*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2"
+  },
+  "author": {
+    "name": "Raxytw",
+    "url": "https://github.com/Raxytw"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Raxytw/dsh-instagram-scroll.git"
+  },
+  "private": false
+}
