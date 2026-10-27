@@ -13,7 +13,7 @@
  */
 
 window.__ModuleLoader__.load({
-  id: 'dsh-instagram-scroll',
+  id: '@luoyi-dsh/instagram-scroll',
   factory: (require) => {
     const React = require('react')
     const h = React.createElement
@@ -556,6 +556,7 @@ window.__ModuleLoader__.load({
       const [tab, setTab] = useState('feed')
       const [cfg, setCfg] = useState(normalizeScrollConfig({}))
       const [status, setStatus] = useState(null)
+      const [mcpStatus, setMcpStatus] = useState(null)
       const [report, setReport] = useState('')
       const [loading, setLoading] = useState(true)
       const [saving, setSaving] = useState(false)
@@ -564,14 +565,18 @@ window.__ModuleLoader__.load({
 
       const refresh = async () => {
         try {
-          const [cfgRes, statusRes, reportRes] = await Promise.all([
-            jget('/config'),
-            jget('/status'),
-            jget('/report'),
+          const [cfgRes, statusRes, reportRes, mcpRes] = await Promise.all([
+            jget('/config').catch(() => null),
+            jget('/status').catch(() => null),
+            jget('/report').catch(() => null),
+            fetch('/api/instagram/mcp/status', { credentials: 'same-origin' })
+              .then((r) => r.json())
+              .catch(() => null),
           ])
           if (cfgRes?.ok) setCfg(normalizeScrollConfig(cfgRes.config))
           if (statusRes?.ok) setStatus(statusRes)
           if (reportRes?.ok) setReport(reportRes.report || '')
+          if (mcpRes?.ok) setMcpStatus(mcpRes)
         } catch (e) {
           setMsg(`讀取狀態失敗: ${e.message}`)
         } finally {
@@ -625,6 +630,22 @@ window.__ModuleLoader__.load({
       const daily = status?.dailyStats || {}
       const recommendedItems = daily.recommendedItems || []
 
+      const isMcpConnected = Boolean(
+        status?.mcpReady ||
+        status?.loginStatus?.ok ||
+        mcpStatus?.mcpReady ||
+        mcpStatus?.loginStatus?.ok
+      )
+
+      const rawAccount =
+        status?.mcpAccount ||
+        status?.loginStatus?.username ||
+        mcpStatus?.loginStatus?.username ||
+        (mcpStatus?.loginStatus?.message?.match(/@([^\s)]+)/)?.[1]) ||
+        (isMcpConnected ? '已連線' : '')
+
+      const displayAccount = rawAccount ? rawAccount.replace(/^@/, '') : ''
+
       return h(
         'div',
         { className: 'ig-scr-root' },
@@ -643,8 +664,22 @@ window.__ModuleLoader__.load({
               h('div', { className: 'ig-scr-brand-title' }, 'Instagram 滾動探索與主人推坑'),
               h(
                 'div',
-                { className: 'ig-scr-brand-sub' },
-                cfg.masterUsername ? `當前主人目標: @${cfg.masterUsername.replace(/^@/, '')}` : '尚未綁定主人帳號'
+                { className: 'ig-scr-brand-sub', style: { display: 'flex', alignItems: 'center', gap: '8px' } },
+                cfg.masterUsername ? `目標主人: @${cfg.masterUsername.replace(/^@/, '')}` : '尚未綁定主人帳號',
+                h('span', { style: { color: 'rgba(255, 255, 255, 0.2)' } }, '|'),
+                isMcpConnected
+                  ? h(
+                      'span',
+                      { style: { color: '#34d399', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' } },
+                      h('span', { style: { width: '6px', height: '6px', borderRadius: '50%', background: '#10b981' } }),
+                      `MCP 會話: @${displayAccount || '已連線'}`
+                    )
+                  : h(
+                      'span',
+                      { style: { color: '#fbbf24', fontSize: '11px', display: 'inline-flex', alignItems: 'center', gap: '4px' } },
+                      h('span', { style: { width: '6px', height: '6px', borderRadius: '50%', background: '#f59e0b' } }),
+                      '等待 MCP 登入'
+                    )
               )
             )
           ),
@@ -652,7 +687,8 @@ window.__ModuleLoader__.load({
             'button',
             {
               className: 'ig-scr-btn primary',
-              disabled: runningRound,
+              disabled: runningRound || !isMcpConnected,
+              title: !isMcpConnected ? '等待 FastMCP 連線就緒後即可刷動態' : '立即替主人刷一輪動態',
               onClick: runNow,
             },
             h(Icon.Play, { size: 12 }),
@@ -818,6 +854,32 @@ window.__ModuleLoader__.load({
                 { className: 'ig-scr-section-head' },
                 h('div', { className: 'ig-scr-section-title' }, '主人身分與興趣偏好配置'),
                 h('div', { className: 'ig-scr-section-desc' }, '設定主人的 Instagram 帳號名與感興趣的標籤領域，AI 將依此進行嚴格內容篩選。')
+              ),
+
+              // MCP Session 來源提示
+              h(
+                'div',
+                {
+                  style: {
+                    background: 'rgba(59, 130, 246, 0.06)',
+                    border: '1px solid rgba(59, 130, 246, 0.2)',
+                    borderRadius: '8px',
+                    padding: '10px 14px',
+                    fontSize: '12px',
+                    color: '#93c5fd',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px',
+                  },
+                },
+                h(Icon.Sparkles, { size: 14 }),
+                h(
+                  'span',
+                  null,
+                  isMcpConnected
+                    ? `已沿用 @luoyi-dsh/instagram-mcp 的登入會話 (@${displayAccount || '已授權'})，本外掛無需填寫帳密。`
+                    : '本外掛無需輸入帳密，直接沿用依賴的 dsh-instagram-mcp 獲取之 Session。目前 MCP 尚未登入，請先至 MCP 面板完成登入。'
+                )
               ),
 
               h(
@@ -1013,47 +1075,71 @@ window.__ModuleLoader__.load({
         const slots = (typeof ctx.get === 'function' ? ctx.get('slots') : undefined) || ctx.slots
         if (!slots) return
 
-        try {
-          slots.inject('settings.section', () =>
+        // 1. 左側一級專屬導航槽位 (settings.section)
+        const registerSection = () => {
+          try {
             slots.register(
               {
                 name: 'settings.section',
                 id: 'instagram-scroll',
-                order: 33,
-                label: 'Instagram 滾動推坑',
+                order: 36,
+                label: 'Instagram 滾動',
               },
               () => h(ScrollPanel)
             )
-          )
-        } catch (e) {}
+          } catch (e) {
+            console.error('[@luoyi-dsh/instagram-scroll] 註冊 settings.section 異常:', e)
+          }
+        }
+        if (typeof slots.inject === 'function') {
+          slots.inject('settings.section', registerSection)
+        } else if (typeof slots.register === 'function') {
+          registerSection()
+        }
 
-        try {
-          slots.inject('settings.plugins.tab', () =>
+        // 2. 外掛程式頁面頂部頁籤 (settings.plugins.tab)
+        const registerTab = () => {
+          try {
             slots.register(
               {
                 name: 'settings.plugins.tab',
                 id: 'instagram-scroll',
-                order: 33,
-                label: 'Instagram 滾動推坑',
+                order: 36,
+                label: 'Instagram 滾動',
               },
               () => h(ScrollPanel)
             )
-          )
-        } catch (e) {}
+          } catch (e) {
+            console.error('[@luoyi-dsh/instagram-scroll] 註冊 settings.plugins.tab 異常:', e)
+          }
+        }
+        if (typeof slots.inject === 'function') {
+          slots.inject('settings.plugins.tab', registerTab)
+        } else if (typeof slots.register === 'function') {
+          registerTab()
+        }
 
-        try {
-          slots.inject('plugins.item', () =>
+        // 3. 外掛程式卡片列表槽位 (plugins.item)
+        const registerItem = () => {
+          try {
             slots.register(
               {
                 name: 'plugins.item',
                 id: 'instagram-scroll',
-                order: 33,
+                order: 36,
                 label: 'Instagram 滾動探索與推坑',
               },
               () => h(ScrollPanel)
             )
-          )
-        } catch (e) {}
+          } catch (e) {
+            console.error('[@luoyi-dsh/instagram-scroll] 註冊 plugins.item 異常:', e)
+          }
+        }
+        if (typeof slots.inject === 'function') {
+          slots.inject('plugins.item', registerItem)
+        } else if (typeof slots.register === 'function') {
+          registerItem()
+        }
       },
     }
   },

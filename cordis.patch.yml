@@ -4,6 +4,6 @@
 
 - insert:
     - id: instagram-scroll
-      name: dsh-instagram-scroll
+      name: '@luoyi-dsh/instagram-scroll'
       config:
         enabled: true

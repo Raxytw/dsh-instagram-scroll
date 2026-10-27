@@ -1,6 +1,6 @@
 {
   "name": "@luoyi-dsh/instagram-scroll",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "DeepSeek Harness (DSH) Instagram 動態滾動瀏覽與探索插件：提供動態牆無限滾動、探索摘要與即時互動能力",
   "keywords": [
     "dsh",
@@ -19,6 +19,7 @@
     },
     "client": {
       "platform": "web",
+      "immediately": true,
       "inject": [
         "@deepseek-ai/dsh-client-ui-settings",
         "@deepseek-ai/dsh-client-ui-settings-plugins"

@@ -21,7 +21,7 @@ import { buildScrollConfigSchema, defaultScrollConfig, InstagramScrollConfig, sa
 import { loadSchemastery } from './lib/hostdeps.js'
 import { ScrollLedgerManager } from './lib/ledger.js'
 import { executeScrollRound } from './core/scrollDuty.js'
-import { type InstagramMcpClient, getSharedMcpClient } from '@luoyi-dsh/instagram-mcp'
+import { type InstagramMcpClient, getSharedMcpClient, getSharedMcpService } from '@luoyi-dsh/instagram-mcp'
 
 export const name = 'instagram-scroll'
 export const inject = ['webServer', 'tools']
@@ -174,10 +174,21 @@ export function apply(ctx: any, userConfig: Partial<InstagramScrollConfig> = {})
 
       // 讀取今日狀態與推坑數據
       if (req.method === 'GET' && pathname === '/api/instagram/scroll/status') {
-        const client = getMcpClient()
+        const svc = getSharedMcpService() || (globalThis as any).__DSH_INSTAGRAM_MCP__
+        const client = getMcpClient() || svc?.client
+        const mcpLogin = svc?.loginStatus || null
+        const isReady = Boolean(client && client.ready)
+        const account =
+          mcpLogin?.username ||
+          (mcpLogin?.message?.match(/@([^\s)]+)/)?.[1]) ||
+          (isReady ? '已連線' : '')
+
         return sendJson(res, 200, {
           ok: true,
-          mcpReady: Boolean(client && client.ready),
+          mcpReady: isReady,
+          inheritedSession: true,
+          loginStatus: mcpLogin || (isReady ? { ok: true, message: 'FastMCP 運行中', username: account } : null),
+          mcpAccount: account,
           dailyStats: ledger.getDailyStats(),
         })
       }
@@ -207,21 +218,30 @@ export function apply(ctx: any, userConfig: Partial<InstagramScrollConfig> = {})
     }
   }
 
+  // 設置全域請求處理器委託，保證即使路由已註冊也能執行最新版本程式碼
+  ;(globalThis as any).__DSH_IG_SCROLL_HANDLER__ = handleRequest
+
   const webServer = (typeof ctx.get === 'function' ? ctx.get('webServer') : undefined) || ctx.webServer
-  if ((globalThis as any).__DSH_IG_SCROLL_ROUTES_REGISTERED__) {
-    // 已經註冊過，防止重複載入導致 duplicate prefix route
-  } else if (webServer) {
+  if (!(globalThis as any).__DSH_IG_SCROLL_ROUTES_REGISTERED__ && webServer) {
+    const routeDispatcher = (req: any, res: any) => {
+      const activeHandler = (globalThis as any).__DSH_IG_SCROLL_HANDLER__
+      if (typeof activeHandler === 'function') {
+        return activeHandler(req, res)
+      }
+      return handleRequest(req, res)
+    }
+
     try {
       if (typeof webServer.register === 'function') {
         webServer.register({
           kind: 'prefix',
           path: '/api/instagram/scroll',
-          handler: handleRequest,
+          handler: routeDispatcher,
         })
         ;(globalThis as any).__DSH_IG_SCROLL_ROUTES_REGISTERED__ = true
         log('✅ 已註冊 DSH 官方路由: /api/instagram/scroll')
       } else if (webServer.router) {
-        webServer.router.all('/api/instagram/scroll/*', handleRequest)
+        webServer.router.all('/api/instagram/scroll/*', routeDispatcher)
         ;(globalThis as any).__DSH_IG_SCROLL_ROUTES_REGISTERED__ = true
       }
     } catch (e: any) {
