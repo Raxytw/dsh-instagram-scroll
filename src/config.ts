@@ -12,6 +12,11 @@ export interface InstagramScrollConfig {
   autoScrollEnabled?: boolean
   likeOnRecommend?: boolean
   batchSize?: number
+  // === 安全防風控 ===
+  maxRecommendsPerRun?: number
+  minPostReadDelaySeconds?: number
+  maxPostReadDelaySeconds?: number
+  cooldownOnBlockMinutes?: number
 }
 
 export const defaultScrollConfig: InstagramScrollConfig = {
@@ -25,6 +30,10 @@ export const defaultScrollConfig: InstagramScrollConfig = {
   autoScrollEnabled: true,
   likeOnRecommend: true,
   batchSize: 15,
+  maxRecommendsPerRun: 1,
+  minPostReadDelaySeconds: 3,
+  maxPostReadDelaySeconds: 7,
+  cooldownOnBlockMinutes: 30,
 }
 
 export function unwrapScrollValue<T>(val: any, fallback: T): T {
@@ -52,6 +61,10 @@ export function sanitizeScrollConfig(raw: any): InstagramScrollConfig {
     autoScrollEnabled: unwrapScrollValue(c.autoScrollEnabled, defaultScrollConfig.autoScrollEnabled ?? true),
     likeOnRecommend: unwrapScrollValue(c.likeOnRecommend, defaultScrollConfig.likeOnRecommend ?? true),
     batchSize: unwrapScrollValue(c.batchSize, defaultScrollConfig.batchSize || 15),
+    maxRecommendsPerRun: unwrapScrollValue(c.maxRecommendsPerRun, defaultScrollConfig.maxRecommendsPerRun || 1),
+    minPostReadDelaySeconds: unwrapScrollValue(c.minPostReadDelaySeconds, defaultScrollConfig.minPostReadDelaySeconds || 3),
+    maxPostReadDelaySeconds: unwrapScrollValue(c.maxPostReadDelaySeconds, defaultScrollConfig.maxPostReadDelaySeconds || 7),
+    cooldownOnBlockMinutes: unwrapScrollValue(c.cooldownOnBlockMinutes, defaultScrollConfig.cooldownOnBlockMinutes || 30),
   }
 }
 
@@ -93,5 +106,21 @@ export function buildScrollConfigSchema(z: any) {
       .number()
       .default(15)
       .description('每輪滾動瀏覽抓取的貼文筆數 (10-30)'),
+    maxRecommendsPerRun: z
+      .number()
+      .default(1)
+      .description('單次滾動瀏覽最多推坑留言則數 (避免短時間連發觸發官方風控)'),
+    minPostReadDelaySeconds: z
+      .number()
+      .default(3)
+      .description('每掃描一則貼文前人造擬真閱讀微延遲最小秒數'),
+    maxPostReadDelaySeconds: z
+      .number()
+      .default(7)
+      .description('每掃描一則貼文前人造擬真閱讀微延遲最大秒數'),
+    cooldownOnBlockMinutes: z
+      .number()
+      .default(30)
+      .description('遇到 Action Block / 頻率限制時自動熔斷暫停分鐘數'),
   })
 }

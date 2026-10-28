@@ -104,6 +104,22 @@ export async function executeScrollRound(
   ledger: ScrollLedgerManager,
   log: (msg: string) => void = console.log
 ): Promise<ScrollRoundResult> {
+  // 防風控冷卻保護檢查
+  if (ledger.isInCooldown()) {
+    const rem = ledger.getCooldownRemainingSeconds()
+    const reason = ledger.getCooldownReason()
+    const msg = `防風控冷卻保護中（剩餘 ${rem} 秒，原因: ${reason}），暫停本輪滾動瀏覽`
+    log(`[ScrollDuty] 🚨 ${msg}`)
+    return {
+      ok: true,
+      totalScanned: 0,
+      worthyCount: 0,
+      recommendedCount: 0,
+      recommendations: [],
+      message: msg,
+    }
+  }
+
   log('[ScrollDuty] 🚀 開始替主人刷一輪 Instagram...')
 
   const master = (config.masterUsername || '').replace(/^@/, '').trim()
@@ -112,6 +128,7 @@ export async function executeScrollRound(
   }
 
   const batchSize = Math.max(5, config.batchSize || 15)
+  const maxPerRun = config.maxRecommendsPerRun || 1
   const candidatePosts: InstagramPost[] = []
 
   // 1. 抓取時間軸首頁動態 (Feed)
@@ -124,6 +141,17 @@ export async function executeScrollRound(
     }
   } catch (e: any) {
     log(`[ScrollDuty] 獲取時間軸動態異常: ${e.message}`)
+    if (/feedback|action block|checkpoint|rate limit/i.test(e.message)) {
+      ledger.triggerCooldown(config.cooldownOnBlockMinutes || 30, e.message)
+      return {
+        ok: false,
+        totalScanned: 0,
+        worthyCount: 0,
+        recommendedCount: 0,
+        recommendations: [],
+        message: `時間軸獲取異常並觸發風控冷卻: ${e.message}`,
+      }
+    }
   }
 
   // 2. 隨機選取一個主人感興趣的標籤進行主題探索 (Explore Tag)
@@ -139,6 +167,9 @@ export async function executeScrollRound(
       }
     } catch (e: any) {
       log(`[ScrollDuty] 探索標籤異常: ${e.message}`)
+      if (/feedback|action block|checkpoint|rate limit/i.test(e.message)) {
+        ledger.triggerCooldown(config.cooldownOnBlockMinutes || 30, e.message)
+      }
     }
   }
 
@@ -147,8 +178,13 @@ export async function executeScrollRound(
   let recommendedCount = 0
   const recommendations: any[] = []
 
-  // 3. 逐條讀內文進行評估與推薦
+  // 3. 逐條讀內文進行評估與推薦 (模擬人類瀏覽微延遲)
   for (const post of candidatePosts) {
+    if (recommendedCount >= maxPerRun) {
+      log(`[ScrollDuty] 達到本輪推坑上限 (${maxPerRun} 則)，結束本輪滾動。`)
+      break
+    }
+
     const postPk = String(post.pk || post.id || '')
     if (!postPk) continue
 
@@ -156,6 +192,12 @@ export async function executeScrollRound(
     if (ledger.hasSeen(postPk)) {
       continue
     }
+
+    // 模擬人類瀏覽閱讀貼文微延遲
+    const minDelay = config.minPostReadDelaySeconds || 3
+    const maxDelay = Math.max(minDelay, config.maxPostReadDelaySeconds || 7)
+    const readWaitMs = Math.floor((minDelay + Math.random() * (maxDelay - minDelay)) * 1000)
+    await new Promise((r) => setTimeout(r, readWaitMs))
 
     totalScanned++
     const evalRes = evaluatePost(post, config)
@@ -174,7 +216,16 @@ export async function executeScrollRound(
           const commentRes = await mcp.igPostComment({
             media_pk: postPk,
             text: evalRes.commentText,
+            jitter_min: 6.0,
+            jitter_max: 15.0,
           })
+
+          if (commentRes?.in_cooldown || (commentRes?.error && /action block|feedback|checkpoint|please wait|rate limit/i.test(commentRes.error))) {
+            ledger.triggerCooldown(config.cooldownOnBlockMinutes || 30, commentRes.error || 'Instagram 頻率風控阻擋')
+            log(`[ScrollDuty] 🚨 偵測到風控或熔斷保護，停止後續推坑！`)
+            ledger.markSeen(postPk, true)
+            break
+          }
 
           if (commentRes?.ok) {
             log(`[ScrollDuty] ✅ 成功留言 @${master}！`)
@@ -182,7 +233,11 @@ export async function executeScrollRound(
 
             // 若開啟，順便點讚
             if (config.likeOnRecommend) {
-              await mcp.igLikeMedia(postPk).catch(() => {})
+              const likeRes = await mcp.igLikeMedia(postPk).catch(() => ({} as any))
+              if (likeRes?.in_cooldown || (likeRes?.error && /action block|feedback|checkpoint|please wait|rate limit/i.test(likeRes.error))) {
+                ledger.triggerCooldown(config.cooldownOnBlockMinutes || 30, likeRes.error || 'Instagram 點讚風控阻擋')
+                break
+              }
             }
 
             const recItem = {
@@ -205,6 +260,10 @@ export async function executeScrollRound(
         } catch (e: any) {
           log(`[ScrollDuty] 留言異常: ${e.message}`)
           ledger.markSeen(postPk, true)
+          if (/feedback|action block|checkpoint|rate limit/i.test(e.message)) {
+            ledger.triggerCooldown(config.cooldownOnBlockMinutes || 30, e.message)
+            break
+          }
         }
       } else {
         log(`[ScrollDuty] 今日推薦已達上限 (${cap}則) 或未配置主人帳號，僅標記值得並記錄日報。`)

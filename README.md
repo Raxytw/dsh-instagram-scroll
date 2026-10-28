@@ -11,6 +11,22 @@
 > Dedicated Instagram feed exploration, AI recommendation, and daily digest plugin for **DeepSeek Harness (DSH)**.  
 > Core capabilities: **Automatically or manually browse Instagram timeline feeds and topic hashtags on behalf of the user, evaluate post relevance against the owner's interests using LLMs, like and leave authentic recommendation comments, and aggregate highlights into daily Markdown reports**.
 
+> [!CAUTION]
+> ### ⚠️ CRITICAL WARNING & DISCLAIMER
+> 1. **Violation of Instagram Terms of Service & Community Guidelines**:
+>    This plugin and its automated feed browsing, liking, and commenting routines operate via unofficial APIs, which **expressly violates Instagram / Meta's Terms of Use and Community Guidelines**.
+> 2. **DO NOT USE YOUR PERSONAL / PRIMARY ACCOUNT**:
+>    **Never run this plugin using your personal, primary, or business Instagram account!** Automated browsing and repeated comment posting are quickly flagged by Instagram's anti-scraping and bot-detection heuristics, resulting in: **Action Blocks, Challenge Checkpoints, temporary locks, and PERMANENT ACCOUNT SUSPENSION / BANNING**.
+> 3. **Use Dedicated Burner / Alt Accounts & Clean Proxies**:
+>    Only run this plugin on disposable secondary accounts (burner/alt accounts) with dedicated residential proxies. Avoid sudden geographic IP changes.
+> 4. **Built-in Anti-Risk Safeguards**:
+>    - **Per-Run Action Cap**: Strictly limits recommendations to at most 1 per scroll run (`maxRecommendsPerRun: 1`) to avoid burst posting.
+>    - **Humanized Reading Delays**: Injects randomized 3–7s reading delays between scanning candidate posts (`minPostReadDelaySeconds: 3, maxPostReadDelaySeconds: 7`).
+>    - **Action Jitter**: Enforces 6–15s randomized delays before executing comments or likes.
+>    - **Circuit Breaker Cooldown**: Automatically pauses all exploration for 30 minutes if an Action Block or rate limit is encountered.
+> 5. **Disclaimer**:
+>    This project is provided strictly for educational and technical research purposes. The developers and contributors accept **no responsibility or liability** for any account bans, suspensions, or losses resulting from its use. Use entirely at your own risk!
+
 ---
 
 ## 🌟 Key Features

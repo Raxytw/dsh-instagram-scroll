@@ -31,6 +31,8 @@ export interface ScrollLedgerState {
     scrolledCount: number
     recommendedCount: number
   }
+  cooldownUntil?: number
+  cooldownReason?: string
 }
 
 export class ScrollLedgerManager {
@@ -168,4 +170,34 @@ export class ScrollLedgerManager {
     } catch {}
     return `今日 (${this.getTodayStr()}) 尚未產生推坑貼文。`
   }
+
+  // === 防風控熔斷冷卻 (Circuit Breaker Cooldown) ===
+  public isInCooldown(): boolean {
+    return typeof this.state.cooldownUntil === 'number' && Date.now() < this.state.cooldownUntil
+  }
+
+  public getCooldownRemainingSeconds(): number {
+    if (!this.isInCooldown()) return 0
+    return Math.max(0, Math.ceil((this.state.cooldownUntil! - Date.now()) / 1000))
+  }
+
+  public getCooldownReason(): string {
+    return this.state.cooldownReason || ''
+  }
+
+  public triggerCooldown(minutes = 30, reason = ''): void {
+    this.state.cooldownUntil = Date.now() + minutes * 60 * 1000
+    this.state.cooldownReason = reason
+    this.save()
+    console.warn(
+      `[ScrollLedger] 🚨 觸發防風控冷卻保護！持續 ${minutes} 分鐘。原因: ${reason}`
+    )
+  }
+
+  public resetCooldown(): void {
+    this.state.cooldownUntil = 0
+    this.state.cooldownReason = ''
+    this.save()
+  }
 }
+
