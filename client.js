@@ -542,13 +542,33 @@ window.__ModuleLoader__.load({
       return {
         masterUsername: cleanStr(c.masterUsername, ''),
         interestTags: cleanArr(c.interestTags, ['ai', 'deepseek', 'coding', 'tech', 'gadgets']),
-        personaPrompt: cleanStr(c.personaPrompt, '你是一位洞察力敏銳、品味高雅的社群特助。請評估這篇 Instagram 貼文/影片是否具有前沿乾貨、創意見解、實用價值或視覺驚艷。若是主人會感興趣的好內容，請給出大於80分的評價，並撰寫簡短自然、熱情真誠的推坑一句話。'),
-        minScore: cleanNum(c.minScore, 75),
+        userInterests: cleanStr(
+          c.userInterests,
+          '專注於前沿 AI 技術 (LLM, Agent, 開源模型)、全端與前端架構、優質開源專案、高效率開發工具、優質 UI/UX 設計或深度乾貨技術解析。偏好乾貨分享、實踐案例與原創見解，不喜歡空洞無物、純蹭熱度、打廣告或純娛樂搞笑的內容。'
+        ),
+        positiveKeywords: cleanArr(c.positiveKeywords, [
+          'ai', 'deepseek', 'agent', 'coding', '技術', '前端', '後端', '架構', '開源', '教學', '程式', '開發', '模型', 'github', 'prompt', '演算法', '工具', '實戰', '乾貨',
+        ]),
+        negativeKeywords: cleanArr(c.negativeKeywords, [
+          '互粉', '代購', '博彩', '運彩', '兼職', '抽獎', '免費領', '私訊', '點擊連結', '主頁連結', '減肥', '微商', '外匯', '虛擬幣', '心靈雞湯', '穿搭', '搞笑', '自拍', '八卦', '暴富', '躺平', '加盟',
+        ]),
+        minCaptionLength: cleanNum(c.minCaptionLength, 30),
+        requireBodyMatch: cleanBool(c.requireBodyMatch, true),
+        strictContentCheck: cleanBool(c.strictContentCheck, true),
+        personaPrompt: cleanStr(
+          c.personaPrompt,
+          '你是一位洞察力敏銳、品味高雅的社群特助。請以極高標準評估這篇 Instagram 貼文是否深度符合主人的興趣偏好。若是具備前沿乾貨、創意見解或高實用價值的精選內容，請給出高分評價並撰寫簡短自然、熱情切題的推坑一句話。'
+        ),
+        minScore: cleanNum(c.minScore, 80),
         dailyRecommendCap: cleanNum(c.dailyRecommendCap, 5),
         scrollIntervalMinutes: cleanNum(c.scrollIntervalMinutes, 60),
         autoScrollEnabled: cleanBool(c.autoScrollEnabled, true),
         likeOnRecommend: cleanBool(c.likeOnRecommend, true),
         batchSize: cleanNum(c.batchSize, 15),
+        maxRecommendsPerRun: cleanNum(c.maxRecommendsPerRun, 1),
+        minPostReadDelaySeconds: cleanNum(c.minPostReadDelaySeconds, 3),
+        maxPostReadDelaySeconds: cleanNum(c.maxPostReadDelaySeconds, 7),
+        cooldownOnBlockMinutes: cleanNum(c.cooldownOnBlockMinutes, 30),
       }
     }
 
@@ -895,21 +915,128 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'ig-scr-hint' }, '發現值得推薦的貼文/影片時，會在留言區 @ 此帳號進行推薦')
               ),
 
+              // 正文實質內容審查開關
+              h(
+                'div',
+                { className: 'ig-scr-switch' },
+                h(
+                  'div',
+                  { className: 'ig-scr-switch-text' },
+                  h('div', { className: 'ig-scr-switch-name' }, '🛡️ 啟用 @ 前正文內容深度審查'),
+                  h('div', { className: 'ig-scr-hint' }, '拒絕隨便推薦！留言 @ 主人前深度檢查正文實質乾貨與品質，剔除純圖廢文與空洞標籤')
+                ),
+                h(
+                  'button',
+                  {
+                    className: `ig-scr-toggle ${cfg.strictContentCheck ? 'on' : ''}`,
+                    onClick: () => updateField('strictContentCheck', !cfg.strictContentCheck),
+                  },
+                  h('span', { className: 'ig-scr-toggle-thumb' })
+                )
+              ),
+
+              // 正文實質命中開關
+              h(
+                'div',
+                { className: 'ig-scr-switch' },
+                h(
+                  'div',
+                  { className: 'ig-scr-switch-text' },
+                  h('div', { className: 'ig-scr-switch-name' }, '🔍 正文必須實質討論偏好主題 (拒絕僅在 tag 蹭熱度)'),
+                  h('div', { className: 'ig-scr-hint' }, '關鍵詞必須在正文中真正出現；若僅在文末堆砌 #標籤 則視為標籤農場直接過濾')
+                ),
+                h(
+                  'button',
+                  {
+                    className: `ig-scr-toggle ${cfg.requireBodyMatch ? 'on' : ''}`,
+                    onClick: () => updateField('requireBodyMatch', !cfg.requireBodyMatch),
+                  },
+                  h('span', { className: 'ig-scr-toggle-thumb' })
+                )
+              ),
+
+              // 主人喜歡的內容風格與偏好詳述
               h(
                 'div',
                 { className: 'ig-scr-field' },
-                h('label', { className: 'ig-scr-label' }, '🏷️ 主人感興趣的主題標籤 (Interest Tags)'),
+                h('label', { className: 'ig-scr-label' }, '💎 主人喜歡的內容風格與領域詳述 (User Interests)'),
+                h('textarea', {
+                  className: 'ig-scr-textarea',
+                  style: { minHeight: '75px' },
+                  value: cleanStr(cfg.userInterests),
+                  placeholder: '詳細描述您喜歡的貼文類型、技術領域、內容風格與乾貨要求...',
+                  onChange: (e) => updateField('userInterests', e.target.value),
+                }),
+                h('div', { className: 'ig-scr-hint' }, 'AI 將依據此描述深度比對正文語義，確保推薦完全符合您的個人品味與需求')
+              ),
+
+              // 正向關鍵字
+              h(
+                'div',
+                { className: 'ig-scr-field' },
+                h('label', { className: 'ig-scr-label' }, '✨ 正文正向領域關鍵字 (Positive Keywords)'),
                 h('input', {
                   className: 'ig-scr-input',
-                  value: Array.isArray(cfg.interestTags) ? cfg.interestTags.join(', ') : '',
-                  placeholder: 'ai, deepseek, coding, photography, gadgets, travel',
+                  value: Array.isArray(cfg.positiveKeywords) ? cfg.positiveKeywords.join(', ') : '',
+                  placeholder: 'ai, deepseek, coding, 前端, 架構, 開源, 教學, 工具',
                   onChange: (e) =>
                     updateField(
-                      'interestTags',
-                      e.target.value.split(',').map((s) => s.trim().replace(/^#/, '')).filter(Boolean)
+                      'positiveKeywords',
+                      e.target.value.split(',').map((s) => s.trim()).filter(Boolean)
                     ),
                 }),
-                h('div', { className: 'ig-scr-hint' }, '多個標籤請用逗號分隔，除時間軸外亦會輪流針對這些主題進行深度探索')
+                h('div', { className: 'ig-scr-hint' }, '正文實質提及這些關鍵詞或相關領域時給予高權重加分')
+              ),
+
+              // 負向排除詞
+              h(
+                'div',
+                { className: 'ig-scr-field' },
+                h('label', { className: 'ig-scr-label' }, '🚫 負向排除關鍵字 (Negative Keywords / Anti-Spam)'),
+                h('input', {
+                  className: 'ig-scr-input',
+                  value: Array.isArray(cfg.negativeKeywords) ? cfg.negativeKeywords.join(', ') : '',
+                  placeholder: '互粉, 代購, 博彩, 抽獎, 微商, 減肥, 穿搭, 搞笑, 自拍',
+                  onChange: (e) =>
+                    updateField(
+                      'negativeKeywords',
+                      e.target.value.split(',').map((s) => s.trim()).filter(Boolean)
+                    ),
+                }),
+                h('div', { className: 'ig-scr-hint' }, '命中任一排除詞直接判定不合格，杜絕廣告宣傳、抽獎促銷與無意義廢文')
+              ),
+
+              h(
+                'div',
+                { className: 'ig-scr-grid-2' },
+                h(
+                  'div',
+                  { className: 'ig-scr-field' },
+                  h('label', { className: 'ig-scr-label' }, '🏷️ 探索主題標籤 (Interest Tags)'),
+                  h('input', {
+                    className: 'ig-scr-input',
+                    value: Array.isArray(cfg.interestTags) ? cfg.interestTags.join(', ') : '',
+                    placeholder: 'ai, deepseek, coding, tech, gadgets',
+                    onChange: (e) =>
+                      updateField(
+                        'interestTags',
+                        e.target.value.split(',').map((s) => s.trim().replace(/^#/, '')).filter(Boolean)
+                      ),
+                  }),
+                  h('div', { className: 'ig-scr-hint' }, '探索抓取起點標籤 (非推薦唯一標準)')
+                ),
+                h(
+                  'div',
+                  { className: 'ig-scr-field' },
+                  h('label', { className: 'ig-scr-label' }, '📏 正文有效文字最小長度 (字數)'),
+                  h('input', {
+                    type: 'number',
+                    className: 'ig-scr-input',
+                    value: cfg.minCaptionLength ?? 30,
+                    onChange: (e) => updateField('minCaptionLength', Number(e.target.value)),
+                  }),
+                  h('div', { className: 'ig-scr-hint' }, '扣除 #標籤 後的正文字數門檻')
+                )
               ),
 
               h(
@@ -1017,7 +1144,7 @@ window.__ModuleLoader__.load({
                   h('input', {
                     type: 'number',
                     className: 'ig-scr-input',
-                    value: cfg.minScore ?? 75,
+                    value: cfg.minScore ?? 80,
                     onChange: (e) => updateField('minScore', Number(e.target.value)),
                   }),
                   h('div', { className: 'ig-scr-hint' }, '高於此分數的貼文才會在留言區 @主人')

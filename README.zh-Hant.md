@@ -34,9 +34,13 @@
 1. **自動動態探索巡查 (Scroll Duty)**：
    - 定期輪詢首頁動態牆 (Timeline Feed) 與指定主題標籤 (Hashtags)。
    - 逐則貼文抓取標題、作者、標籤與完整內文。
-2. **LLM 價值評估與推坑 (AI Recommendation)**：
-   - 由大語言模型依據主人的興趣 Prompt 深度分析貼文內容與價值評分。
-   - 若達標（預設 > 75 分），自動在貼文下點讚並留言 `@目標用戶` 附上真誠自然的推薦語。
+2. **正文深度審查與用戶偏好推薦 (Content Inspection Pipeline)**：
+   - **絕不隨便推薦**：徹底拋棄僅看 tag 與點讚數的粗糙過濾，門檻提高至 80 分。
+   - **正文與標籤徹底分離**：自動分離真實正文與文末 `#標籤`，有效字數過短或僅有單一 emoji 者直接判定為無實質內容過濾。
+   - **標籤農場攔截**：偵測標籤堆砌蹭熱度（Hashtag Spamming），杜絕空洞蹭流量貼文。
+   - **正文主題實質核驗**：正文必須切實探討主人喜愛的領域與關鍵詞，禁止僅在文末掛標籤蹭熱度。
+   - **負向廣告與垃圾過濾**：自動排除互粉、代購、抽獎、博彩、微商、心靈雞湯與純自拍娛樂等無效內容。
+   - **LLM / 語義深度質檢與客製化推坑詞**：結合主人喜好描述，由 LLM 或深度啟發式引擎審查真實主旨，並針對貼文亮點生成專屬真誠推薦詞，在留言區 `@主人`。
 3. **每日探索日報 (Daily Markdown Report)**：
    - 自動將今日瀏覽之所有精選貼文、摘要與推薦紀錄整理為 Markdown 日報。
    - 儲存於 `data/reports/YYYY-MM-DD.md`，可隨時在 Web 面板查看與回溯。
@@ -135,10 +139,20 @@ curl -X POST http://127.0.0.1:3080/api/instagram/scroll/config \
 | 欄位名稱 | 型別 | 預設值 | 說明 |
 | :--- | :--- | :--- | :--- |
 | **`masterUsername`** | string | `""` | 主人的 Instagram 使用者名稱（達標時在留言區 @主人 推薦） |
-| **`interestTags`** | array | `["ai", "deepseek", "coding", "tech"]` | 主人感興趣的主題標籤或領域關鍵字清單 |
+| **`userInterests`** | string | *預設偏好詳述* | 主人喜歡的內容風格與領域詳細描述（供 AI 深度比對正文語義） |
+| **`positiveKeywords`** | array | `["ai", "deepseek", ...]` | 正文必須提及或重點加分的領域關鍵字清單 |
+| **`negativeKeywords`** | array | `["互粉", "代購", "抽獎", ...]` | 負向排除關鍵字（命中時直接判定不推薦，杜絕廣告與廢文） |
+| **`minCaptionLength`** | number | `30` | 正文有效文字最小字數門檻（扣除 #標籤 後過短者直接過濾） |
+| **`requireBodyMatch`** | boolean| `true` | 正文實質內容必須命中主人偏好主題（拒絕僅在文末蹭 tag） |
+| **`strictContentCheck`**| boolean| `true` | 啟用 @ 前深度正文審查機制（結合 LLM / 正文語義深度質檢） |
+| **`interestTags`** | array | `["ai", "deepseek", "coding", "tech", "gadgets"]` | 探索抓取的主題標籤（僅作為探索起點，非推薦唯一標準） |
 | **`personaPrompt`** | string | *預設人設提示詞* | 評估貼文趣味度與撰寫 @主人 推薦語的人設 Prompt |
-| **`minScore`** | number | `75` | 推坑門檻分數（0-100，達標才在貼文下留言推薦） |
+| **`minScore`** | number | `80` | 推坑門檻分數（0-100，達標才在貼文下留言推薦，提高門檻避免隨便推薦） |
 | **`dailyRecommendCap`** | number | `5` | 每日向主人推坑留言的上限則數（防止過度打擾與風控） |
+| **`maxRecommendsPerRun`**| number | `1` | 單次滾動瀏覽最多推坑留言則數（避免短時間連發觸發官方風控） |
+| **`minPostReadDelaySeconds`** | number | `3` | 每讀取一則貼文前人造擬真閱讀微延遲最小秒數 |
+| **`maxPostReadDelaySeconds`** | number | `7` | 每讀取一則貼文前人造擬真閱讀微延遲最大秒數 |
+| **`cooldownOnBlockMinutes`** | number | `30` | 遇到 Action Block / 頻率限制時自動熔斷暫停分鐘數 |
 | **`scrollIntervalMinutes`**| number | `60` | 自動巡查刷動態牆的時間週期（分鐘） |
 | **`autoScrollEnabled`** | boolean| `true` | 是否啟用背景定時自動刷動態牆任務 |
 | **`likeOnRecommend`** | boolean| `true` | 決定推薦給主人時是否順便對該貼文點讚 |

@@ -34,9 +34,13 @@
 1. **Automated Feed Browsing (Scroll Duty)**:
    - Periodically polls timeline feeds and configured topic hashtags.
    - Extracts post caption, author, tags, and media metadata.
-2. **LLM Evaluation & Smart Recommendation**:
-   - Analyzes post relevance and scores content (0-100) based on master's interest prompt.
-   - Automatically likes posts and writes authentic recommendation comments mentioning master (`@masterUsername`) when score meets criteria (default > 75).
+2. **Deep Content Inspection & User Preference Alignment**:
+   - **No Superficial Recommendations**: Abandons simple hashtag-only / high-like criteria; threshold raised to score 80.
+   - **Caption & Tag Separation**: Dissects raw captions to separate genuine body text from trailing hashtags and mentions. Posts with substantive body text shorter than `minCaptionLength` (30 chars) are discarded.
+   - **Hashtag Spam / Farm Detection**: Flags and drops posts where tags dominate over meaningful content.
+   - **Body Topic Verification**: Mandates that master's interest keywords/topics genuinely appear within the post body (`requireBodyMatch`).
+   - **Negative / Spam Filtering**: Instantly filters out giveaways, mutual-follows, dropshipping, gambling, emotional clickbait, and superficial selfie/meme posts.
+   - **LLM Semantic Review & Tailored Hook**: Evaluates true content substance via LLM or robust heuristic review, synthesizing custom authentic recommendation comments.
 3. **Daily Markdown Digest (`data/reports/YYYY-MM-DD.md`)**:
    - Automatically organizes reviewed posts, summaries, and recommendation trails into clean Markdown daily digests.
    - Viewable directly in the web console.
@@ -133,10 +137,20 @@ curl -X POST http://127.0.0.1:3080/api/instagram/scroll/config \
 | Field | Type | Default | Description |
 | :--- | :--- | :--- | :--- |
 | **`masterUsername`** | string | `""` | Master's Instagram username (mentioned in comments when recommended) |
-| **`interestTags`** | array | `["ai", "deepseek", "coding", "tech"]` | Topic hashtags and keywords matching the owner's interest |
+| **`userInterests`** | string | *Default persona description* | Detailed description of owner's topics, taste, and technical expectations |
+| **`positiveKeywords`** | array | `["ai", "deepseek", ...]` | High-priority positive topic keywords required in post body |
+| **`negativeKeywords`** | array | `["互粉", "代購", "抽獎", ...]` | Negative / spam blacklist words to immediately reject |
+| **`minCaptionLength`** | number | `30` | Minimum character length of genuine post body (excluding hashtags) |
+| **`requireBodyMatch`** | boolean| `true` | Body text must substantiate owner's preferences (rejects tag-only matches) |
+| **`strictContentCheck`**| boolean| `true` | Enables deep content inspection pipeline before commenting |
+| **`interestTags`** | array | `["ai", "deepseek", "coding", "tech", "gadgets"]` | Exploration starting tags (not sole recommendation criteria) |
 | **`personaPrompt`** | string | *Default persona prompt* | Persona prompt guiding post analysis and recommendation copywriting |
-| **`minScore`** | number | `75` | Recommendation score threshold (0-100) |
+| **`minScore`** | number | `80` | Recommendation score threshold (0-100; elevated to avoid spam) |
 | **`dailyRecommendCap`** | number | `5` | Maximum recommendation comments allowed per day |
+| **`maxRecommendsPerRun`**| number | `1` | Max recommendations per duty run to prevent bursting |
+| **`minPostReadDelaySeconds`** | number | `3` | Minimum human reading pacing delay between posts |
+| **`maxPostReadDelaySeconds`** | number | `7` | Maximum human reading pacing delay between posts |
+| **`cooldownOnBlockMinutes`** | number | `30` | Automatic circuit breaker cooldown minutes upon action blocks |
 | **`scrollIntervalMinutes`**| number | `60` | Background exploration duty interval in minutes |
 | **`autoScrollEnabled`** | boolean| `true` | Whether background automated exploration duty is enabled |
 | **`likeOnRecommend`** | boolean| `true` | Automatically like post upon recommending to master |

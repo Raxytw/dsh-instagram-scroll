@@ -7,7 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [1.0.1] - 2026-10-28
+## [1.0.3] - 2026-10-28
+
+### Added
+- **Deep Content Inspection Pipeline**:
+  - Implemented `parsePostContent` to strictly separate raw post captions from trailing hashtags and account mentions.
+  - Added substantive body text length validation (`minCaptionLength`) to discard superficial single-emoji or textless media posts.
+  - Implemented tag spamming detection (`isTagSpam`) to filter out hashtag farms.
+- **User Preference Alignment**:
+  - Added `userInterests` detailed persona & preference description for deep semantic comparison.
+  - Added `positiveKeywords` for essential topic matching in actual post body text (`requireBodyMatch`).
+  - Added `negativeKeywords` anti-spam filter for ads, giveaways, mutual follows, and irrelevant entertainment fluff.
+- **Pre-mention Content Verification**:
+  - Deep review via host LLM or heuristic rules before posting any `@master` comment.
+  - Post-specific tailored hook generation to eliminate generic repeated comments.
+  - Elevated default recommendation threshold score to `80`.
+
+---
+
+## [1.0.2] - 2026-10-28
+
+### Added
+- **Anti-Risk & Anti-Ban Controls**:
+  - Circuit Breaker Cooldown mode (30 minutes) on Action Block / Feedback Required exceptions.
+  - Humanized reading pacing (3-7s delay between posts).
+  - Single-run recommendation limit (`maxRecommendsPerRun = 1`) to avoid burst commenting.
+- **Community Guidelines Disclaimer**:
+  - Explicit warning callout in documentation against using personal primary Instagram accounts.
+
+---
 
 ### Added
 - **Dynamic Route Dispatcher**:
