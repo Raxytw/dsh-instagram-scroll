@@ -12,6 +12,8 @@
    - 滾動探索與主題搜尋時，自動過濾 AI 生成的影片、AI 動畫、AI 繪圖或 AI 生成農場文章（包含 `#aiart`, `#aivideo`, `#aianimation`, `#sora`, `#midjourney`, `#runwayml`, `#klingai`, `AI生成`, `AI影片`, `AI動畫` 等）。
 3. **共享外部插件 LLM 訂閱額度**：
    - 深度語義審核優先調用 `@luoyi-dsh/instagram-plugin` 掛載之統一推理引擎 (`__DSH_INSTAGRAM_LLM__`) 與 DSH 宿主 `ctx.llm`，支援 `dsh-plugin-subscriptions` 外部訂閱額度。
+4. **【第一條件】去 AI 味與兼容 `dsh-feiyu-mood` 心情指標**：
+   - 自動共享 `ANTI_AI_FLAVOR_PRIMARY_RULE` 與 `dsh-feiyu-mood` 心情指標 (`~/.dsh/feiyu-mood/state.json`)，確保生成的 `@主人` 推坑留言自然口語、毫無 AI 客服腔與罐頭感。
 
 ---
 

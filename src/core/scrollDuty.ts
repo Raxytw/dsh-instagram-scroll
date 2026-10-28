@@ -347,7 +347,15 @@ export async function inspectAndEvaluatePost(
   }
 
   // === 第 5 關：LLM 深度語義質檢 (如果環境具備 LLM 能力) ===
-  const systemPrompt = `你是一位高品味、眼光極為嚴格的私人內容審查特助。
+  const sharedCompanion = (globalThis as any).__DSH_INSTAGRAM_LLM__
+  const moodBlock =
+    typeof sharedCompanion?.buildFeiyuMoodPromptBlock === 'function'
+      ? sharedCompanion.buildFeiyuMoodPromptBlock(true)
+      : ''
+  const antiAiRule =
+    sharedCompanion?.ANTI_AI_FLAVOR_PRIMARY_RULE ||
+    '【第一條件（最高優先級鐵則）：推坑留言絕對不要 AI 味，嚴禁客服腔、總結腔、排比句或機械式吹捧，要像真人朋友隨手分享一樣自然口語】'
+  const systemPrompt = `${antiAiRule}\n${moodBlock ? `${moodBlock}\n` : ''}\n你是一位高品味、眼光極為嚴格的私人內容審查夥伴。
 主人的核心原則是：「絕對不要隨便推薦、必須切合主人喜歡的內容，在留言 @ 主人之前必須深入檢查正文實質內容，嚴禁只看文末的 tag 就隨意推薦」。
 主人的內容偏好定義如下：
 """
@@ -391,7 +399,11 @@ ${parsed.cleanBody.slice(0, 800)}
       const isWorthy = Boolean(parsedLlm.isWorthy) && score >= minScore
 
       if (isWorthy) {
-        const hook = String(parsedLlm.hookPhrase || parsedLlm.reason || '這篇分析非常到位，強烈推薦！').trim()
+        const rawHook = String(parsedLlm.hookPhrase || parsedLlm.reason || '這篇講得蠻透的，留給你看看').trim()
+        const hook =
+          typeof sharedCompanion?.stripAiFlavorArtifacts === 'function'
+            ? sharedCompanion.stripAiFlavorArtifacts(rawHook)
+            : rawHook
         const commentText = master ? `@${master} ${hook}` : hook
         return {
           isWorthy: true,
