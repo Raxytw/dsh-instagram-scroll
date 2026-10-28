@@ -10,9 +10,16 @@
    - 機器人登入會話 (`username`) 與推坑目標主人帳號 (`masterUsername`) 直接從 `@luoyi-dsh/instagram-mcp` 自動讀取與同步，無須在本插件額外輸入。
 2. **嚴格排除 AI 生成內容 (AIGC Filter)**：
    - 滾動探索與主題搜尋時，自動過濾 AI 生成的影片、AI 動畫、AI 繪圖或 AI 生成農場文章（包含 `#aiart`, `#aivideo`, `#aianimation`, `#sora`, `#midjourney`, `#runwayml`, `#klingai`, `AI生成`, `AI影片`, `AI動畫` 等）。
-3. **共享外部插件 LLM 訂閱額度**：
-   - 深度語義審核優先調用 `@luoyi-dsh/instagram-plugin` 掛載之統一推理引擎 (`__DSH_INSTAGRAM_LLM__`) 與 DSH 宿主 `ctx.llm`，支援 `dsh-plugin-subscriptions` 外部訂閱額度。
-4. **【第一條件】去 AI 味與兼容 `dsh-feiyu-mood` 心情指標**：
+3. **共享外部插件 LLM 訂閱額度與多模態模型調度**：
+   - 深度語義審查優先調用 `@luoyi-dsh/instagram-plugin` 掛載之統一推理引擎 (`__DSH_INSTAGRAM_LLM__`)。
+   - **多模態視覺與模型調度**：支援傳入貼文與 Reel 的視覺畫面截圖/封面，正常情況使用 DeepSeek 視覺感知；若配置或降級至外部訂閱額度（如 `Google Antigravity` + `gemini-3-flash`），則將畫面直接交由該模型進行視覺多模態理解。
+4. **與 `dsh-fish-memory` 雙向聯通（對話記憶讀取 + Reel/貼文感想寫入）**：
+   - **讀取對話記憶**：動態讀取 `~/.dsh/fish-memory/` 中主人與機器人的對話記憶脈絡，精準提取主人近期感興趣的話題、技術方向或審美喜好，以此動態篩選貼文與 Reel。
+   - **寫入瀏覽感想**：當滾動瀏覽發現好文、精選內容或完成推薦時，自動將該則貼文/Reel 的內容摘要與審閱感想寫入 `~/.dsh/fish-memory/social_ig_thoughts_*.json`，讓 Agent 在後續對話中能隨時聊起「之前刷 IG 看過某篇貼文/Reel 的心得」。
+5. **推坑文字動態生成鐵則（嚴禁空泛套話）**：
+   - 推坑留言必須 100% 根據「這則貼文或 Reel 裡的具體內容」動態生成，點出看過的人才說得出的具體細節、畫面亮點或技術點。
+   - 絕對禁止出現「很推薦」、「強烈推薦」、「值得一看」、「乾貨滿滿」、「推推」等任何萬金油套話。
+6. **【第一條件】去 AI 味與兼容 `dsh-feiyu-mood` 心情指標**：
    - 自動共享 `ANTI_AI_FLAVOR_PRIMARY_RULE` 與 `dsh-feiyu-mood` 心情指標 (`~/.dsh/feiyu-mood/state.json`)，確保生成的 `@主人` 推坑留言自然口語、毫無 AI 客服腔與罐頭感。
 
 ---

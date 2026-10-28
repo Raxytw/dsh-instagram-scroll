@@ -8,7 +8,7 @@
  * ============================================================================
  */
 
-import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { existsSync, readdirSync, readFileSync, writeFileSync, mkdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { InstagramMcpClient, InstagramPost } from '@luoyi-dsh/instagram-mcp'
@@ -243,6 +243,110 @@ function resolveOwnerMemoryContext(masterUsername?: string): {
     }
   } catch {
     return empty
+  }
+}
+
+/**
+ * 將刷 Reel 短片或貼文的感想內容寫入 dsh-fish-memory 社交對話記憶庫
+ */
+export async function recordScrollThoughtToFishMemory(options: {
+  mediaPk: string
+  author?: string
+  text: string
+  thought: string
+  code?: string
+  productType?: string
+  score?: number
+  url?: string
+}): Promise<boolean> {
+  // 1. 優先使用 dsh-instagram-plugin 共享的統一記憶寫入器
+  const shared = (globalThis as any).__DSH_INSTAGRAM_LLM__
+  if (shared && typeof shared.recordMediaThoughtMemory === 'function') {
+    try {
+      await shared.recordMediaThoughtMemory({
+        mediaPk: options.mediaPk,
+        author: options.author,
+        text: options.text,
+        thought: options.thought,
+        code: options.code,
+        productType: options.productType,
+      })
+      return true
+    } catch {}
+  }
+
+  // 2. 獨立運行時的持久化寫入 ~/.dsh/fish-memory/social_ig_thoughts_scroll.json
+  try {
+    const dshHome = process.env.DSH_HOME || join(process.env.USERPROFILE || process.env.HOME || homedir(), '.dsh')
+    const fishDir = join(dshHome, 'fish-memory')
+    if (!existsSync(fishDir)) {
+      mkdirSync(fishDir, { recursive: true })
+    }
+    const targetFile = join(fishDir, 'social_ig_thoughts_scroll.json')
+    let store: {
+      owner: string
+      category: string
+      messages: any[]
+      memories: any[]
+      updatedAt: string
+    } = {
+      owner: 'scroll',
+      category: 'social_ig_thoughts',
+      messages: [],
+      memories: [],
+      updatedAt: new Date().toISOString(),
+    }
+
+    if (existsSync(targetFile)) {
+      try {
+        const raw = JSON.parse(readFileSync(targetFile, 'utf-8'))
+        store = {
+          owner: raw?.owner || 'scroll',
+          category: raw?.category || 'social_ig_thoughts',
+          messages: Array.isArray(raw?.messages) ? raw.messages : [],
+          memories: Array.isArray(raw?.memories) ? raw.memories : [],
+          updatedAt: raw?.updatedAt || new Date().toISOString(),
+        }
+      } catch {}
+    }
+
+    const nowIso = new Date().toISOString()
+    const memoryId = `thought_${options.mediaPk}_${Date.now()}`
+    const summaryText = `[IG動態感想] ${options.author ? `@${options.author} ` : ''}${options.text ? options.text.slice(0, 160) : ''} —— 感想：${options.thought}`
+
+    // 寫入 memories 陣列供語義檢索
+    store.memories.push({
+      id: memoryId,
+      text: summaryText,
+      tags: ['social_thought', 'instagram', 'scroll', options.productType || 'feed'],
+      importance: options.score && options.score >= 80 ? 0.75 : 0.6,
+      source: 'instagram_scroll',
+      at: nowIso,
+      createdAt: nowIso,
+      mediaPk: options.mediaPk,
+      author: options.author,
+      code: options.code,
+      productType: options.productType,
+      url: options.url,
+    })
+
+    // 同時寫入 messages 陣列供對話歷史還原
+    store.messages.push({
+      role: 'assistant',
+      content: summaryText,
+      timestamp: nowIso,
+      mediaPk: options.mediaPk,
+    })
+
+    if (store.memories.length > 200) store.memories = store.memories.slice(-200)
+    if (store.messages.length > 200) store.messages = store.messages.slice(-200)
+    store.updatedAt = nowIso
+
+    writeFileSync(targetFile, JSON.stringify(store, null, 2), 'utf-8')
+    return true
+  } catch (err: any) {
+    console.warn(`[ScrollDuty] 寫入 dsh-fish-memory 異常: ${err.message}`)
+    return false
   }
 }
 
@@ -853,6 +957,18 @@ export async function executeScrollRound(
       )
       log(`[ScrollDuty] 選片依據: ${evalRes.reason}`)
 
+      // 寫入 dsh-fish-memory：紀錄對這則貼文/Reel 的感想內容
+      await recordScrollThoughtToFishMemory({
+        mediaPk: postPk,
+        author: post.user?.username || 'unknown',
+        text: String(post.caption || (post as any).title || '').slice(0, 300),
+        thought: evalRes.reason || evalRes.commentText || '探索審查精選',
+        code: post.code,
+        productType: post.media_type === 2 || post.product_type === 'clips' ? 'clips' : 'feed',
+        score: evalRes.score,
+        url: post.url || `https://www.instagram.com/p/${post.code}/`,
+      }).catch(() => {})
+
       // 檢查是否還能推坑 (每日上限控制)
       const cap = config.dailyRecommendCap || 5
       if (ledger.canRecommend(cap) && master) {
@@ -958,6 +1074,19 @@ export async function executeScrollRound(
         ledger.markSeen(post, true)
       }
     } else {
+      if (evalRes.score >= 55) {
+        // 紀錄瀏覽過程中有看點之 Reel/貼文感想至 dsh-fish-memory
+        await recordScrollThoughtToFishMemory({
+          mediaPk: postPk,
+          author: post.user?.username || 'unknown',
+          text: String(post.caption || (post as any).title || '').slice(0, 300),
+          thought: evalRes.rejectionReason || '滾動瀏覽已審閱',
+          code: post.code,
+          productType: post.media_type === 2 || post.product_type === 'clips' ? 'clips' : 'feed',
+          score: evalRes.score,
+          url: post.url || `https://www.instagram.com/p/${post.code}/`,
+        }).catch(() => {})
+      }
       log(`[ScrollDuty] ⏭️ 未通過內容審核: ${evalRes.rejectionReason || '評分未達標準'}`)
       ledger.markSeen(post, false)
     }
