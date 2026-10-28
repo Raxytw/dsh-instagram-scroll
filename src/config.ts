@@ -107,14 +107,24 @@ export function unwrapScrollValue<T>(val: any, fallback: T): T {
   return val as T
 }
 
+function parseListValue(val: any, fallback: string[] = []): string[] {
+  if (Array.isArray(val)) {
+    return val.map((s) => String(s || '').trim()).filter(Boolean)
+  }
+  if (typeof val === 'string') {
+    return val.split(/[,，\n]+/).map((s) => s.trim().replace(/^#/, '')).filter(Boolean)
+  }
+  return fallback
+}
+
 export function sanitizeScrollConfig(raw: any): InstagramScrollConfig {
   const c = raw || {}
   return {
     masterUsername: unwrapScrollValue(c.masterUsername, defaultScrollConfig.masterUsername || ''),
-    interestTags: Array.isArray(c.interestTags) ? c.interestTags : (defaultScrollConfig.interestTags || []),
+    interestTags: parseListValue(c.interestTags, defaultScrollConfig.interestTags || []),
     userInterests: unwrapScrollValue(c.userInterests, defaultScrollConfig.userInterests || ''),
-    positiveKeywords: Array.isArray(c.positiveKeywords) ? c.positiveKeywords : (defaultScrollConfig.positiveKeywords || []),
-    negativeKeywords: Array.isArray(c.negativeKeywords) ? c.negativeKeywords : (defaultScrollConfig.negativeKeywords || []),
+    positiveKeywords: parseListValue(c.positiveKeywords, defaultScrollConfig.positiveKeywords || []),
+    negativeKeywords: parseListValue(c.negativeKeywords, defaultScrollConfig.negativeKeywords || []),
     minCaptionLength: unwrapScrollValue(c.minCaptionLength, defaultScrollConfig.minCaptionLength || 30),
     requireBodyMatch: unwrapScrollValue(c.requireBodyMatch, defaultScrollConfig.requireBodyMatch ?? true),
     strictContentCheck: unwrapScrollValue(c.strictContentCheck, defaultScrollConfig.strictContentCheck ?? true),

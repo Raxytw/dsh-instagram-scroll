@@ -583,6 +583,20 @@ window.__ModuleLoader__.load({
       const [runningRound, setRunningRound] = useState(false)
       const [msg, setMsg] = useState(null)
 
+      // 獨立字串狀態：解決 input 鍵入逗號與空格被 React 重新格式化吃掉的問題
+      const [tagsInputText, setTagsInputText] = useState('')
+      const [positiveWordsText, setPositiveWordsText] = useState('')
+      const [negativeWordsText, setNegativeWordsText] = useState('')
+
+      const parseListFromText = (text, isTag = false) => {
+        if (typeof text !== 'string') return []
+        return text
+          .split(/[,，\n]+/)
+          .map((s) => s.trim())
+          .map((s) => (isTag ? s.replace(/^#/, '') : s))
+          .filter(Boolean)
+      }
+
       const refresh = async () => {
         try {
           const [cfgRes, statusRes, reportRes, mcpRes] = await Promise.all([
@@ -593,7 +607,13 @@ window.__ModuleLoader__.load({
               .then((r) => r.json())
               .catch(() => null),
           ])
-          if (cfgRes?.ok) setCfg(normalizeScrollConfig(cfgRes.config))
+          if (cfgRes?.ok) {
+            const loaded = normalizeScrollConfig(cfgRes.config)
+            setCfg(loaded)
+            setTagsInputText(loaded.interestTags.join(', '))
+            setPositiveWordsText(loaded.positiveKeywords.join(', '))
+            setNegativeWordsText(loaded.negativeKeywords.join(', '))
+          }
           if (statusRes?.ok) setStatus(statusRes)
           if (reportRes?.ok) setReport(reportRes.report || '')
           if (mcpRes?.ok) setMcpStatus(mcpRes)
@@ -614,10 +634,19 @@ window.__ModuleLoader__.load({
         setSaving(true)
         setMsg(null)
         try {
-          const cleanPayload = normalizeScrollConfig(cfg)
+          const cleanPayload = {
+            ...normalizeScrollConfig(cfg),
+            interestTags: parseListFromText(tagsInputText, true),
+            positiveKeywords: parseListFromText(positiveWordsText, false),
+            negativeKeywords: parseListFromText(negativeWordsText, false),
+          }
           const res = await jpost('/config', cleanPayload)
           if (res?.ok) {
-            setCfg(normalizeScrollConfig(res.config))
+            const saved = normalizeScrollConfig(res.config)
+            setCfg(saved)
+            setTagsInputText(saved.interestTags.join(', '))
+            setPositiveWordsText(saved.positiveKeywords.join(', '))
+            setNegativeWordsText(saved.negativeKeywords.join(', '))
             setMsg('✅ 滾動推坑設定已成功保存！')
           }
         } catch (e) {
@@ -977,13 +1006,13 @@ window.__ModuleLoader__.load({
                 h('label', { className: 'ig-scr-label' }, '✨ 正文正向領域關鍵字 (Positive Keywords)'),
                 h('input', {
                   className: 'ig-scr-input',
-                  value: Array.isArray(cfg.positiveKeywords) ? cfg.positiveKeywords.join(', ') : '',
+                  value: positiveWordsText,
                   placeholder: 'ai, deepseek, coding, 前端, 架構, 開源, 教學, 工具',
-                  onChange: (e) =>
-                    updateField(
-                      'positiveKeywords',
-                      e.target.value.split(',').map((s) => s.trim()).filter(Boolean)
-                    ),
+                  onChange: (e) => {
+                    const raw = e.target.value
+                    setPositiveWordsText(raw)
+                    updateField('positiveKeywords', parseListFromText(raw, false))
+                  },
                 }),
                 h('div', { className: 'ig-scr-hint' }, '正文實質提及這些關鍵詞或相關領域時給予高權重加分')
               ),
@@ -995,13 +1024,13 @@ window.__ModuleLoader__.load({
                 h('label', { className: 'ig-scr-label' }, '🚫 負向排除關鍵字 (Negative Keywords / Anti-Spam)'),
                 h('input', {
                   className: 'ig-scr-input',
-                  value: Array.isArray(cfg.negativeKeywords) ? cfg.negativeKeywords.join(', ') : '',
+                  value: negativeWordsText,
                   placeholder: '互粉, 代購, 博彩, 抽獎, 微商, 減肥, 穿搭, 搞笑, 自拍',
-                  onChange: (e) =>
-                    updateField(
-                      'negativeKeywords',
-                      e.target.value.split(',').map((s) => s.trim()).filter(Boolean)
-                    ),
+                  onChange: (e) => {
+                    const raw = e.target.value
+                    setNegativeWordsText(raw)
+                    updateField('negativeKeywords', parseListFromText(raw, false))
+                  },
                 }),
                 h('div', { className: 'ig-scr-hint' }, '命中任一排除詞直接判定不合格，杜絕廣告宣傳、抽獎促銷與無意義廢文')
               ),
@@ -1015,15 +1044,15 @@ window.__ModuleLoader__.load({
                   h('label', { className: 'ig-scr-label' }, '🏷️ 探索主題標籤 (Interest Tags)'),
                   h('input', {
                     className: 'ig-scr-input',
-                    value: Array.isArray(cfg.interestTags) ? cfg.interestTags.join(', ') : '',
+                    value: tagsInputText,
                     placeholder: 'ai, deepseek, coding, tech, gadgets',
-                    onChange: (e) =>
-                      updateField(
-                        'interestTags',
-                        e.target.value.split(',').map((s) => s.trim().replace(/^#/, '')).filter(Boolean)
-                      ),
+                    onChange: (e) => {
+                      const raw = e.target.value
+                      setTagsInputText(raw)
+                      updateField('interestTags', parseListFromText(raw, true))
+                    },
                   }),
-                  h('div', { className: 'ig-scr-hint' }, '探索抓取起點標籤 (非推薦唯一標準)')
+                  h('div', { className: 'ig-scr-hint' }, '探索抓取起點標籤 (非推薦唯一標準，支援空格與中英文逗號)')
                 ),
                 h(
                   'div',
