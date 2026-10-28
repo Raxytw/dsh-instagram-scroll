@@ -8,6 +8,9 @@
  * ============================================================================
  */
 
+import { existsSync, readdirSync, readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
 import type { InstagramMcpClient, InstagramPost } from '@luoyi-dsh/instagram-mcp'
 import { InstagramScrollConfig } from '../config.js'
 import { ScrollLedgerManager } from '../lib/ledger.js'
@@ -165,20 +168,203 @@ function detectAigcPost(caption: string = '', username: string = ''): string | n
   return null
 }
 
+const SCROLL_CONTENT_SPECIFIC_RULE = `【推坑留言內容動態生成鐵則（嚴禁空泛說「很推薦 / 值得一看 / 乾貨滿滿」）】
+1. 你的推坑留言（@主人 後面的那句話）必須 100% 根據「這則貼文或 Reel 裡面的具體內容」動態生成！
+2. 必須點出這則貼文/Reel 裡只有看過的人才說得出來的一個具體細節、畫面亮點、某個做法、某個詞、某個反差或技術點（例如：「那個護目鏡的反光好像是用圖層混合疊出來的，邊緣卻收得很乾淨」、「他把狀態機拆成三層去接 WebSocket，那段重連處理寫得挺聰明的」）。
+3. 絕對禁止任何萬金油推薦套話！嚴禁出現：「很推薦」、「強烈推薦」、「特別推薦」、「非常推薦」、「值得一看」、「很值得看」、「推薦你看」、「乾貨滿滿」、「推推」、「大推」、「不能錯過」、「分享非常扎實」、「分析得很透徹」、「這篇關於…」、「這支影片…」等放在哪篇貼文都通用的廢話！
+4. 直接從你在貼文裡注意到的那個具體細節開口，像跟很熟的主人隨口聊起眼前看到的東西，不超過兩句話，自然收尾。`
+
+function resolveOwnerMemoryContext(masterUsername?: string): {
+  hasMemories: boolean
+  memoryCount: number
+  memoryLines: string[]
+  dynamicKeywords: string[]
+  promptBlock: string
+} {
+  const shared = (globalThis as any).__DSH_INSTAGRAM_LLM__
+  if (shared && typeof shared.loadOwnerMemoryInterestContext === 'function') {
+    try {
+      return shared.loadOwnerMemoryInterestContext(masterUsername)
+    } catch {}
+  }
+
+  // 獨立運行時的備援記憶讀取器 (~/.dsh/fish-memory/session-*.json)
+  const empty = { hasMemories: false, memoryCount: 0, memoryLines: [], dynamicKeywords: [], promptBlock: '' }
+  try {
+    const dshHome = process.env.DSH_HOME || join(process.env.USERPROFILE || process.env.HOME || homedir(), '.dsh')
+    const fishDir = join(dshHome, 'fish-memory')
+    if (!existsSync(fishDir)) return empty
+    const files = readdirSync(fishDir).filter(
+      (f) => f.endsWith('.json') && (f.startsWith('session-') || f === 'global.json' || f === 'default.json')
+    )
+    if (files.length === 0) return empty
+
+    const nowMs = Date.now()
+    const items: Array<{ text: string; tags: string[]; related: string[]; score: number }> = []
+    for (const file of files) {
+      try {
+        const raw = JSON.parse(readFileSync(join(fishDir, file), 'utf-8'))
+        for (const m of Array.isArray(raw?.memories) ? raw.memories : []) {
+          const text = String(m?.text || '').trim()
+          if (!text || text.length < 4) continue
+          const createdMs = new Date(m.at || m.createdAt || nowMs).getTime()
+          const ageDays = Math.max(0, (nowMs - (Number.isFinite(createdMs) ? createdMs : nowMs)) / 86400000)
+          const recency = Math.exp(-(Math.LN2 * ageDays) / 21)
+          const imp = Math.max(0, Math.min(1, Number(m.importance ?? 0.5)))
+          items.push({
+            text,
+            tags: Array.isArray(m.tags) ? m.tags : [],
+            related: Array.isArray(m.related) ? m.related : [],
+            score: 0.5 * recency + 0.35 * imp + (m.category === 'stable_profile' ? 0.25 : 0),
+          })
+        }
+      } catch {}
+    }
+    if (items.length === 0) return empty
+    items.sort((a, b) => b.score - a.score)
+    const memoryLines = items.slice(0, 10).map((m) => `- ${m.text}`)
+    const kwSet = new Set<string>()
+    for (const m of items.slice(0, 10)) {
+      const eng = m.text.match(/\b[a-zA-Z][a-zA-Z0-9+#.-]{2,18}\b/g) || []
+      for (const w of eng) {
+        if (!/^(http|https|www|com|org|net|the|and|for|with|from)$/i.test(w)) kwSet.add(w.toLowerCase())
+      }
+    }
+    const dynamicKeywords = Array.from(kwSet).slice(0, 5)
+    const promptBlock = `【與主人的過往對話記憶脈絡 (dsh-fish-memory，用於動態選擇主人真正可能喜歡的內容)】：\n${memoryLines.join(
+      '\n'
+    )}\n- 【記憶驅動選片準則】：請結合上方「與用戶對話的記憶」與主人的興趣偏好，動態判斷這則貼文或 Reel 是否契合主人近期關注的事物、聊過的話題、技術方向或審美喜好。\n- 【隱私保護紅線】：上方對話記憶僅供你在心裡判斷選片口味，撰寫公開留言時必須 100% 聚焦於「這則貼文/Reel 本身的內容細節」，絕對不可把主人的私人行程、作息時間或隱私對話直接寫在公開留言區！`
+    return {
+      hasMemories: true,
+      memoryCount: memoryLines.length,
+      memoryLines,
+      dynamicKeywords,
+      promptBlock,
+    }
+  } catch {
+    return empty
+  }
+}
+
+function sanitizeRecommendText(rawComment: string, targetUser?: string): string {
+  const shared = (globalThis as any).__DSH_INSTAGRAM_LLM__
+  if (shared && typeof shared.sanitizeRecommendationComment === 'function') {
+    return shared.sanitizeRecommendationComment(rawComment, targetUser)
+  }
+  if (!rawComment) return ''
+  let text = String(rawComment)
+    .trim()
+    .replace(/^["'「『“”]+|["'」』“”]+$/g, '')
+    .replace(/^\[?\d{1,3}\s*分\]?[：:、，,\s-]*/g, '')
+    .replace(/^@[\p{L}\p{N}._]+[\s，,：:、]+/u, '')
+    .replace(/^這篇關於\s*#?[^\s：:，,]+?\s*的內容(很|非常|超)?值得一看[：:，,\s]*/g, '')
+    .replace(
+      /[，,。！!；;\s]*(真的|非常|特別|強烈|真心|超|很)*(很推薦給?你看|推薦給?你看|推薦給?你|很推薦|強烈推薦|特別推薦|值得一看|很值得看|乾貨滿滿|不能錯過|分享非常扎實|分析得很透徹|推推|大推|特地\s*@\s*你存起來)[！!~～。]*$/g,
+      ''
+    )
+    .trim()
+  if (!text || text.length < 5) return ''
+  if (/^(很推薦|推薦你看|值得一看|分享給你|這篇很棒|這篇不錯)[！!。~～\s]*$/.test(text)) return ''
+  return text
+}
+
+function parseRecommendLlmOutput(
+  llmReply: string,
+  minScore: number = 80,
+  targetUser?: string
+): {
+  isRecommend: boolean
+  score: number
+  commentBody: string
+  reason: string
+  rejectionReason: string
+} {
+  const shared = (globalThis as any).__DSH_INSTAGRAM_LLM__
+  if (shared && typeof shared.parseRecommendationLlmOutput === 'function') {
+    return shared.parseRecommendationLlmOutput(llmReply, minScore, targetUser)
+  }
+  const raw = String(llmReply || '').trim()
+  const jsonMatch = raw.match(/\{[\s\S]*\}/)
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0])
+      const score = Number(parsed.score ?? (parsed.isWorthy || parsed.recommend ? 85 : 30))
+      const isApprove = Boolean(parsed.isWorthy ?? parsed.recommend) && score >= minScore
+      const rawHook = String(parsed.comment || parsed.hookPhrase || parsed.reason || '').trim()
+      const commentBody = isApprove ? sanitizeRecommendText(rawHook, targetUser) : ''
+      if (isApprove && commentBody) {
+        return {
+          isRecommend: true,
+          score,
+          commentBody,
+          reason: String(parsed.reason || parsed.summary || commentBody),
+          rejectionReason: '',
+        }
+      }
+      return {
+        isRecommend: false,
+        score,
+        commentBody: '',
+        reason: '',
+        rejectionReason: String(parsed.rejectionReason || '未達推薦門檻或無具體貼文評論'),
+      }
+    } catch {}
+  }
+
+  const scoreMatch = raw.match(/(?:^|\b)(100|[1-9]\d)\s*分(?:[：:、，,\s-]*([\s\S]+))?/)
+  if (scoreMatch) {
+    const score = Number(scoreMatch[1])
+    const rest = String(scoreMatch[2] || raw.replace(scoreMatch[0], '')).trim()
+    const commentBody = score >= minScore ? sanitizeRecommendText(rest, targetUser) : ''
+    if (score >= minScore && commentBody) {
+      return {
+        isRecommend: true,
+        score,
+        commentBody,
+        reason: `符合主人記憶偏好 (${score}分)：${commentBody}`,
+        rejectionReason: '',
+      }
+    }
+    return {
+      isRecommend: false,
+      score,
+      commentBody: '',
+      reason: '',
+      rejectionReason: `評分 (${score}分) 未達門檻 (${minScore}分)`,
+    }
+  }
+
+  return {
+    isRecommend: false,
+    score: 0,
+    commentBody: '',
+    reason: '',
+    rejectionReason: 'LLM 未給出高分與針對貼文內容的具體評論',
+  }
+}
+
 /**
  * 調用共享外部插件訂閱額度 (dsh-plugin-subscriptions / __DSH_INSTAGRAM_LLM__)、宿主 LLM 或自訂 API 進行深度語義內容審查
  */
 async function callLlmInference(
   ctx: any,
   systemPrompt: string,
-  userPrompt: string
+  userPrompt: string,
+  imageUrls: string[] = []
 ): Promise<string | null> {
-  // 0. 優先使用 dsh-instagram-plugin 共享的統一 LLM 引擎 (支援讀取 dsh-plugin-subscriptions 外部額度)
+  // 0. 優先使用 dsh-instagram-plugin 共享的統一 LLM 引擎 (支援讀取 dsh-plugin-subscriptions 外部額度與多模態視覺圖片)
   const sharedIgLlm = (globalThis as any).__DSH_INSTAGRAM_LLM__
   if (sharedIgLlm && typeof sharedIgLlm.callLlmForInstagram === 'function') {
     try {
       const sharedCfg = (globalThis as any).__DSH_INSTAGRAM_PLUGIN_CONFIG__ || {}
-      const res = await sharedIgLlm.callLlmForInstagram(ctx, sharedCfg, systemPrompt, userPrompt)
+      const res = await sharedIgLlm.callLlmForInstagram(
+        ctx,
+        sharedCfg,
+        systemPrompt,
+        userPrompt,
+        console.log,
+        imageUrls
+      )
       if (res && res.trim()) return res.trim()
     } catch (e: any) {
       console.warn(`[ScrollDuty LLM] 共享訂閱 LLM 調用異常: ${e.message}`)
@@ -195,7 +381,7 @@ async function callLlmInference(
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
           ],
-          temperature: 0.3,
+          temperature: 0.5,
         })
         const reply = res?.content || res?.text || (typeof res === 'string' ? res : '')
         if (reply) return reply
@@ -228,8 +414,7 @@ async function callLlmInference(
             { role: 'system', content: systemPrompt },
             { role: 'user', content: userPrompt },
           ],
-          temperature: 0.3,
-          response_format: { type: 'json_object' },
+          temperature: 0.5,
         }),
       })
       if (resp.ok) {
@@ -246,29 +431,69 @@ async function callLlmInference(
 
 /**
  * 嚴密的高精度內容檢驗引擎 (Content Inspection Pipeline)
- * 解決痛點：「不要隨便推薦、要依據用戶喜歡內容、@ 前要檢查貼文內容、不要只看 tag」
+ * 解決痛點：
+ * 1. 根據與用戶對話的記憶 (dsh-fish-memory) 動態選擇用戶可能喜歡的內容才做推薦
+ * 2. 推薦時的 @+文字 必須根據該貼文或 Reel 的具體內容動態生成，嚴禁空泛說「很推薦...」或使用罐頭模板
  */
 export async function inspectAndEvaluatePost(
   ctx: any,
   post: InstagramPost,
-  config: InstagramScrollConfig
+  config: InstagramScrollConfig,
+  mcp?: InstagramMcpClient
 ): Promise<EvaluationResult> {
   const mcpSvc = (globalThis as any).__DSH_INSTAGRAM_MCP__
   const master = (mcpSvc?.config?.masterUsername || config.masterUsername || '').replace(/^@/, '').trim()
-  const parsed = parsePostContent(post.caption || '')
+  const postPk = String(post.pk || post.id || '').split('_')[0].trim()
+
+  // 若貼文文字較短或為 Reel 短片，嘗試拉取完整上下文（字幕、視覺描述、音訊、圖片）以供 AI 讀取真實內容
+  let rawCaption = String(post.caption || '')
+  let postTitle = String((post as any).title || '')
+  let a11yCaption = String((post as any).accessibility_caption || '')
+  let videoSubtitles = String((post as any).video_subtitles || '')
+  let audioInfo = String((post as any).audio_info || '')
+  let imageUrls: string[] = Array.isArray((post as any).image_urls) ? [...(post as any).image_urls] : []
+  if (post.thumbnail_url && !imageUrls.includes(post.thumbnail_url)) {
+    imageUrls.unshift(post.thumbnail_url)
+  }
+
+  if (mcp && postPk && (rawCaption.length < 60 || imageUrls.length === 0 || post.media_type === 2 || post.product_type === 'clips')) {
+    try {
+      const detailCtx: any = await mcp.igGetPostContext(postPk, 8)
+      const dp: any = detailCtx?.media || detailCtx?.post
+      if (dp) {
+        if (dp.caption && String(dp.caption).length > rawCaption.length) rawCaption = String(dp.caption)
+        if (dp.title) postTitle = String(dp.title)
+        if (dp.accessibility_caption) a11yCaption = String(dp.accessibility_caption)
+        if (dp.video_subtitles) videoSubtitles = String(dp.video_subtitles)
+        if (dp.audio_info) audioInfo = String(dp.audio_info)
+        if (Array.isArray(dp.image_urls) && dp.image_urls.length > 0) {
+          imageUrls = dp.image_urls
+        } else if (dp.thumbnail_url && !imageUrls.includes(dp.thumbnail_url)) {
+          imageUrls.push(dp.thumbnail_url)
+        }
+      }
+    } catch {}
+  }
+
+  const parsed = parsePostContent(rawCaption)
   const minScore = config.minScore || 80
   const minLength = config.minCaptionLength || 30
   const userInterests =
     config.userInterests ||
-    '專注於前沿 AI 技術、開源軟體、全端與前端架構、實用開發工具、優質 UI/UX 設計技巧或實用技術深度解析；喜愛實踐乾貨與原創見解。'
+    '專注於真實人類原創手繪藝術 (插畫、Kemono、角色設計)、前沿軟體技術、開源專案、實用開發工具與原創見解。'
 
-  // === 第 1 關：正文實質內容字數檢驗 (拒絕無內文或純圖廢文) ===
-  if (parsed.cleanLength < minLength) {
+  // 載入與主人的對話記憶脈絡
+  const ownerMemory = resolveOwnerMemoryContext(master)
+
+  // === 第 1 關：實質內容檢驗 (若既無正文、無字幕/視覺描述，且無圖片視覺可供多模態審閱，則拒絕) ===
+  const combinedTextLength = parsed.cleanLength + a11yCaption.length + videoSubtitles.length + postTitle.length
+  const hasVisualMedia = imageUrls.length > 0
+  if (combinedTextLength < Math.min(minLength, 12) && !hasVisualMedia) {
     return {
       isWorthy: false,
       score: 15,
       reason: '',
-      rejectionReason: `正文有效字數不足 (${parsed.cleanLength} 字 < 門檻 ${minLength} 字)，資訊量過少無實質乾貨內容。`,
+      rejectionReason: `貼文有效資訊不足 (${combinedTextLength} 字) 且無視覺畫面可供審閱。`,
       commentText: '',
       reviewMethod: 'heuristic',
     }
@@ -316,37 +541,44 @@ export async function inspectAndEvaluatePost(
     }
   }
 
-  // === 第 4 關：正文實質主題核驗 (不能只看文末 tag) ===
+  // === 第 4 關：計算關鍵詞命中輔助資訊 (融合設定關鍵字 + 與用戶對話記憶中的動態興趣詞) ===
   const positiveWords = Array.from(
     new Set([
       ...(config.positiveKeywords || []),
       ...(config.fuzzyKeywords || []),
       ...(config.interestTags || []),
+      ...(ownerMemory.dynamicKeywords || []),
     ])
   )
-  const cleanLower = parsed.cleanBody.toLowerCase()
+  const searchableLower = `${parsed.cleanBody} ${postTitle} ${a11yCaption} ${videoSubtitles}`.toLowerCase()
   const hitBodyKeywords: string[] = []
 
   for (const kw of positiveWords) {
     const cleanKw = kw.toLowerCase().trim()
-    if (cleanKw && cleanLower.includes(cleanKw)) {
+    if (cleanKw && searchableLower.includes(cleanKw)) {
       hitBodyKeywords.push(cleanKw)
     }
   }
 
-  // 若設定要求「正文必須命中用戶偏好」，且正文未命中任何關鍵字，直接退回
-  if (config.requireBodyMatch && hitBodyKeywords.length === 0) {
+  // 若無對話記憶、無視覺圖片且開啟強制字面命中時才做前置攔截；若有對話記憶或圖片，交由第 5 關 LLM 結合記憶動態判斷
+  if (
+    config.requireBodyMatch &&
+    hitBodyKeywords.length === 0 &&
+    !ownerMemory.hasMemories &&
+    !hasVisualMedia &&
+    parsed.cleanLength < minLength
+  ) {
     return {
       isWorthy: false,
       score: 30,
       reason: '',
-      rejectionReason: `正文實質內容未提及主人偏好領域關鍵字 (僅文末標籤包含相關字詞，判定為蹭熱度)。`,
+      rejectionReason: `內文未提及主人偏好領域關鍵字且字數不足。`,
       commentText: '',
       reviewMethod: 'heuristic',
     }
   }
 
-  // === 第 5 關：LLM 深度語義質檢 (如果環境具備 LLM 能力) ===
+  // === 第 5 關：LLM 深度語義與記憶契合度質檢 (唯一推薦決策來源，嚴禁使用罐頭 Heuristic 留言) ===
   const sharedCompanion = (globalThis as any).__DSH_INSTAGRAM_LLM__
   const moodBlock =
     typeof sharedCompanion?.buildFeiyuMoodPromptBlock === 'function'
@@ -355,130 +587,84 @@ export async function inspectAndEvaluatePost(
   const antiAiRule =
     sharedCompanion?.ANTI_AI_FLAVOR_PRIMARY_RULE ||
     '【第一條件（最高優先級鐵則）：推坑留言絕對不要 AI 味，嚴禁客服腔、總結腔、排比句或機械式吹捧，要像真人朋友隨手分享一樣自然口語】'
-  const systemPrompt = `${antiAiRule}\n${moodBlock ? `${moodBlock}\n` : ''}\n你是一位高品味、眼光極為嚴格的私人內容審查夥伴。
-主人的核心原則是：「絕對不要隨便推薦、必須切合主人喜歡的內容，在留言 @ 主人之前必須深入檢查正文實質內容，嚴禁只看文末的 tag 就隨意推薦」。
-主人的內容偏好定義如下：
-"""
+  const personaText =
+    config.personaPrompt ||
+    '你是一位眼光敏銳、說話自然的夥伴。請根據與主人的對話記憶與主人的偏好，判斷這則貼文是否值得推坑，並針對貼文裡的具體細節寫一句自然的話。'
+
+  const systemPrompt = `${antiAiRule}
+
+${SCROLL_CONTENT_SPECIFIC_RULE}
+
+【角色人設與說話方式】：
+${personaText}
+${moodBlock ? `\n${moodBlock}` : ''}
+${ownerMemory.promptBlock ? `\n${ownerMemory.promptBlock}` : ''}
+
+【主人長期內容偏好】：
 ${userInterests}
-"""
 
-任務要求：
-1. 【最高鐵律】嚴格排除任何「AI 生成的影片、AI 動畫、AI 繪圖/算圖、AI 配音或 AI 生成的農場文章」（例如 Sora、Runway、Midjourney、Stable Diffusion、Kling、可靈、即夢、AIGC 等）。只要貼文是 AI 算圖、AI 生成影片/動畫或 AI 農場文，必須無條件給低分並設 isWorthy: false！
-2. 請審查貼文正文是否深度探討主人喜歡的主題（真實人類原創手繪創作、真實技術開發實踐、開源專案或優質乾貨），還是只是空泛的標籤農場或蹭流量。
-3. 若內容確實極為優秀且深度符合主人喜好，請給出大於等於 ${minScore} 的高分，並撰寫簡短真誠、針對此篇貼文具體乾貨的一句話推坑留言 (不要千篇一律套話)。
-4. 若品質普通、偏題或僅表面蹭熱度，給予低於 ${minScore} 的分數並給出 rejectionReason。
+【審查與推坑留言鐵律】：
+1. 【最高鐵律】嚴格排除任何「AI 生成的影片、AI 動畫、AI 繪圖/算圖、AI 配音或 AI 生成的農場文章」（例如 Sora、Runway、Midjourney、Stable Diffusion、Kling、可靈、即夢、AIGC 等）。只要懷疑是 AI 算圖或 AI 影片/文章，無條件不推薦！
+2. 【根據與用戶對話的記憶動態選片】請對照上方「與主人的過往對話記憶脈絡」與「主人長期內容偏好」，動態判斷主人看到這則貼文/Reel 會不會真心喜歡、想收藏或想討論。若只是普通流量文或主人不會感興趣，請給低於 ${minScore} 分（設 isWorthy: false）。
+3. 【推坑文字必須緊扣該貼文的具體內容】若決定推薦（分數 >= ${minScore}），你寫給主人的那句話（hookPhrase）必須直接講這則貼文/Reel 裡的某個具體細節、某個畫面呈現、某句話或某個做法（只有看過這則貼文的人才說得出來的內容），絕對禁止說「很推薦」、「強烈推薦」、「值得一看」、「乾貨滿滿」、「推推」、「這篇關於…的內容分享非常扎實」等空泛套話！`
 
-請嚴格輸出 JSON 格式：
-{
-  "isWorthy": boolean,
-  "score": number, // 0-100
-  "summary": "貼文真正主旨簡介 (30字內)",
-  "rejectionReason": "未通過的原因 (若不合格)",
-  "reason": "推薦給主人的實質價值說明 (若合格)",
-  "hookPhrase": "針對本篇內容亮點量身打造的推坑一句話 (若合格，25字內，真誠具體，嚴禁空洞廢話)"
-}`
+  const extraLines: string[] = []
+  if (postTitle) extraLines.push(`- 標題：${postTitle}`)
+  if (a11yCaption) extraLines.push(`- 畫面視覺描述 (Accessibility)：${a11yCaption}`)
+  if (videoSubtitles) extraLines.push(`- 影片字幕內容：${videoSubtitles.slice(0, 500)}`)
+  if (audioInfo) extraLines.push(`- 音訊資訊：${audioInfo}`)
 
-  const userPrompt = `請審查以下 Instagram 貼文：
-- 作者：@${post.user?.username || 'unknown'}
+  const userPrompt = `請審查以下 Instagram ${post.media_type === 2 || post.product_type === 'clips' ? 'Reel 短片' : '貼文'}（若有附圖請一併檢視畫面細節）：
+- 作者：@${post.user?.username || 'unknown'} (${post.user?.full_name || ''})
 - 互動數據：${post.like_count || 0} 讚, ${post.comment_count || 0} 則留言
-- 貼文真正正文內容 (已剔除標籤)：
+${extraLines.length > 0 ? extraLines.join('\n') + '\n' : ''}- 貼文正文內容 (已剔除文末標籤)：
 """
-${parsed.cleanBody.slice(0, 800)}
+${parsed.cleanBody.slice(0, 900) || '(此貼文以畫面/視覺呈現為主，請參考畫面描述與附圖)'}
 """
 - 文末標籤清單：#${parsed.hashtags.join(', #')}
-- 正文命中之領域詞：${hitBodyKeywords.join(', ') || '無'}
+- 命中之興趣/記憶關鍵詞：${hitBodyKeywords.join(', ') || '由語義與記憶脈絡動態判斷'}
 
-請依據審查原則進行嚴格評估並以 JSON 返回。`
+請輸出 JSON 格式：
+{
+  "isWorthy": boolean,
+  "score": number, // 0-100，達 ${minScore} 分以上才推薦
+  "rejectionReason": "未通過的原因 (若不合格)",
+  "reason": "為什麼根據主人的對話記憶與喜好覺得主人會喜歡這篇 (內部日誌用)",
+  "hookPhrase": "直接對主人說的那一句推坑留言（必須點出這則貼文/畫面裡的具體細節，不要加 @用戶名，嚴禁出現『很推薦』『值得一看』『乾貨滿滿』『推推』等套話！）"
+}
+（或依你的人設直接回覆：「85分 <針對這則貼文具體內容細節的那一句推坑>」；若不合格則回覆「不推薦」）`
 
-  const llmResponse = await callLlmInference(ctx, systemPrompt, userPrompt)
+  const llmResponse = await callLlmInference(ctx, systemPrompt, userPrompt, imageUrls.slice(0, 2))
   if (llmResponse) {
-    try {
-      const cleanedJson = llmResponse.replace(/^```json\s*/i, '').replace(/\s*```$/i, '').trim()
-      const parsedLlm = JSON.parse(cleanedJson)
-      const score = Number(parsedLlm.score || 0)
-      const isWorthy = Boolean(parsedLlm.isWorthy) && score >= minScore
-
-      if (isWorthy) {
-        const rawHook = String(parsedLlm.hookPhrase || parsedLlm.reason || '這篇講得蠻透的，留給你看看').trim()
-        const hook =
-          typeof sharedCompanion?.stripAiFlavorArtifacts === 'function'
-            ? sharedCompanion.stripAiFlavorArtifacts(rawHook)
-            : rawHook
-        const commentText = master ? `@${master} ${hook}` : hook
-        return {
-          isWorthy: true,
-          score,
-          reason: String(parsedLlm.reason || parsedLlm.summary || '內容深度契合主人關注領域且具備乾貨價值。'),
-          commentText,
-          reviewMethod: 'llm',
-        }
-      } else {
-        return {
-          isWorthy: false,
-          score,
-          reason: '',
-          rejectionReason: String(parsedLlm.rejectionReason || '內容深度未達主人品味標準或主題不符。'),
-          commentText: '',
-          reviewMethod: 'llm',
-        }
+    const parsedEval = parseRecommendLlmOutput(llmResponse, minScore, master)
+    if (parsedEval.isRecommend && parsedEval.commentBody) {
+      const commentText = master ? `@${master} ${parsedEval.commentBody}` : parsedEval.commentBody
+      return {
+        isWorthy: true,
+        score: parsedEval.score,
+        reason: parsedEval.reason,
+        commentText,
+        reviewMethod: 'llm',
       }
-    } catch (e: any) {
-      console.warn(`[ScrollDuty] LLM 結果 JSON 解析異常: ${e.message}`)
     }
-  }
-
-  // === 備援：啟發式嚴密內容質檢 (Heuristic Rule Engine) ===
-  // 當宿主無 LLM 或 LLM 調用異常時，依然嚴守品質底線，絕不隨便推薦！
-  let heuristicScore = 40 // 底分
-
-  // 正文字數深度加分 (有較長詳細說明通常具備更高乾貨密度)
-  if (parsed.cleanLength > 300) heuristicScore += 18
-  else if (parsed.cleanLength > 150) heuristicScore += 12
-  else if (parsed.cleanLength > 60) heuristicScore += 6
-
-  // 正文實質命中關鍵詞加分
-  heuristicScore += Math.min(25, hitBodyKeywords.length * 8)
-
-  // 乾貨排版特徵檢查 (具備條列、步驟或結構化排版)
-  if (/[0-9][.、]|👉|✅|🔹|💡|📌|\n- |\n\* /.test(parsed.cleanBody)) {
-    heuristicScore += 10
-  }
-
-  // 社群互動數據適度輔助加分 (最多 12 分，避免高讚垃圾貼文)
-  const likes = post.like_count || 0
-  const comments = post.comment_count || 0
-  if (likes > 300) heuristicScore += 6
-  if (comments > 15) heuristicScore += 6
-
-  heuristicScore = Math.min(96, Math.max(10, heuristicScore))
-  const isHeuristicWorthy = heuristicScore >= minScore
-
-  if (isHeuristicWorthy) {
-    const reason = `正文實質深度探討 [${hitBodyKeywords.slice(0, 3).join(', ')}]，文字詳實完整 (${parsed.cleanLength} 字)，結構條理分明。`
-    const hookPhrases = [
-      `這篇關於 ${hitBodyKeywords[0] || '該主題'} 的內容分享非常扎實，特別推薦你看！`,
-      `發現這篇乾貨對你的方向很有啟發，特地 @ 你存起來！`,
-      `這篇思路與案例分析得很透徹，內容很硬核，推推！`,
-    ]
-    const chosenHook = hookPhrases[Math.floor(Math.random() * hookPhrases.length)]
-    const commentText = master ? `@${master} ${chosenHook}` : `這篇乾貨非常精彩，推薦關注！`
-
-    return {
-      isWorthy: true,
-      score: heuristicScore,
-      reason,
-      commentText,
-      reviewMethod: 'heuristic',
-    }
-  } else {
     return {
       isWorthy: false,
-      score: heuristicScore,
+      score: parsedEval.score || 35,
       reason: '',
-      rejectionReason: `內容乾貨密度評分 (${heuristicScore}) 未達嚴選門檻 (${minScore})。`,
+      rejectionReason: parsedEval.rejectionReason || '經 AI 結合主人對話記憶與貼文內容審查，未達推薦標準。',
       commentText: '',
-      reviewMethod: 'heuristic',
+      reviewMethod: 'llm',
     }
+  }
+
+  // 當 LLM 無法連線或未回應時，絕不使用罐頭模板亂發「很推薦 / 乾貨滿滿 / 推推」留言！
+  return {
+    isWorthy: false,
+    score: 0,
+    reason: '',
+    rejectionReason: 'AI 模型暫時無法連線生成針對該貼文內容的具體推坑留言，為避免發送罐頭套話已跳過推薦。',
+    commentText: '',
+    reviewMethod: 'llm',
   }
 }
 
@@ -513,6 +699,18 @@ export async function executeScrollRound(
     log('[ScrollDuty] ⚠️ 尚未在 MCP 配置主人帳號 (masterUsername)，將僅進行瀏覽審核而不留言 @主人。')
   }
 
+  // 載入與主人的過往對話記憶，用於動態擴充檢索興趣詞與選片判斷
+  const ownerMemory = resolveOwnerMemoryContext(master)
+  if (ownerMemory.hasMemories) {
+    log(
+      `[ScrollDuty] 🧠 已讀取與主人 (@${master || 'master'}) 的對話記憶 ${ownerMemory.memoryCount} 條${
+        ownerMemory.dynamicKeywords.length > 0
+          ? `，動態記憶興趣詞: [${ownerMemory.dynamicKeywords.slice(0, 4).join(', ')}]`
+          : ''
+      }`
+    )
+  }
+
   const batchSize = Math.max(5, config.batchSize || 15)
   const maxPerRun = config.maxRecommendsPerRun || 1
   const candidatePosts: InstagramPost[] = []
@@ -540,11 +738,15 @@ export async function executeScrollRound(
     }
   }
 
-  // 2A. 模糊搜尋探索 (Fuzzy Search) —— 預設啟用，解決單純 Tags 搜尋返回 0 則貼文問題
+  // 2A. 模糊搜尋探索 (Fuzzy Search) —— 結合設定關鍵字與從主人對話記憶動態提取的興趣詞
   const useFuzzy = config.fuzzySearchEnabled !== false
-  const fuzzyWords = (config.fuzzyKeywords && config.fuzzyKeywords.length > 0)
-    ? config.fuzzyKeywords
-    : (config.interestTags || [])
+  const baseFuzzyWords =
+    config.fuzzyKeywords && config.fuzzyKeywords.length > 0
+      ? config.fuzzyKeywords
+      : config.interestTags || []
+  const fuzzyWords = Array.from(
+    new Set([...(ownerMemory.dynamicKeywords || []).slice(0, 3), ...baseFuzzyWords])
+  )
 
   if (useFuzzy && fuzzyWords.length > 0) {
     const randomKeyword = fuzzyWords[Math.floor(Math.random() * fuzzyWords.length)].replace(/^#/, '').trim()
@@ -642,14 +844,14 @@ export async function executeScrollRound(
     await new Promise((r) => setTimeout(r, readWaitMs))
 
     totalScanned++
-    const evalRes = await inspectAndEvaluatePost(ctx, post, config)
+    const evalRes = await inspectAndEvaluatePost(ctx, post, config, mcp)
 
     if (evalRes.isWorthy) {
       worthyCount++
       log(
-        `[ScrollDuty] ⭐ 發現極高價值內容！審查機制: [${evalRes.reviewMethod.toUpperCase()}], 評分: ${evalRes.score}/100, 作者: @${post.user?.username || 'unknown'}`
+        `[ScrollDuty] ⭐ 發現契合主人對話記憶與偏好的高分內容！審查機制: [${evalRes.reviewMethod.toUpperCase()}], 評分: ${evalRes.score}/100, 作者: @${post.user?.username || 'unknown'}`
       )
-      log(`[ScrollDuty] 推薦原因: ${evalRes.reason}`)
+      log(`[ScrollDuty] 選片依據: ${evalRes.reason}`)
 
       // 檢查是否還能推坑 (每日上限控制)
       const cap = config.dailyRecommendCap || 5
@@ -673,11 +875,15 @@ export async function executeScrollRound(
             continue
           }
         } catch {}
-        // @ 前進行最後確認檢查 (Pre-mention Verification)
-        if (!evalRes.commentText || !evalRes.commentText.includes(master)) {
-          log(`[ScrollDuty] ⚠️ 推坑語句缺少 @${master}，自動補上主人名稱`)
-          evalRes.commentText = `@${master} ${evalRes.commentText || '這篇分析非常到位，特地推薦你看看！'}`
+
+        // @ 前進行最後內容具體性核驗 (絕不允許空泛套話或無內容預設句)
+        const cleanBody = sanitizeRecommendText(evalRes.commentText || '', master)
+        if (!cleanBody) {
+          log(`[ScrollDuty] ⏭️ 推坑語句過於空泛或含推薦套話，拒絕發送罐頭留言 (${postPk})`)
+          ledger.markSeen(post, false)
+          continue
         }
+        evalRes.commentText = `@${master} ${cleanBody}`
 
         log(`[ScrollDuty] 正在貼文下留言推坑: "${evalRes.commentText}"...`)
         try {
