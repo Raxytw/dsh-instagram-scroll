@@ -626,14 +626,15 @@ export async function executeScrollRound(
       break
     }
 
-    const postPk = String(post.pk || post.id || '')
+    const postPk = String(post.pk || post.id || '').split('_')[0].trim()
     if (!postPk) continue
 
     // 跳過已看過的貼文
-    if (ledger.hasSeen(postPk)) {
+    if (ledger.hasSeen(post) || ledger.hasEverSent(post)) {
       continue
     }
 
+    ledger.markSeen(post, false)
     // 模擬人類瀏覽閱讀貼文微延遲
     const minDelay = config.minPostReadDelaySeconds || 3
     const maxDelay = Math.max(minDelay, config.maxPostReadDelaySeconds || 7)
@@ -653,6 +654,25 @@ export async function executeScrollRound(
       // 檢查是否還能推坑 (每日上限控制)
       const cap = config.dailyRecommendCap || 5
       if (ledger.canRecommend(cap) && master) {
+        if (ledger.hasEverSent(post)) {
+          log(`[ScrollDuty] ⏭️ 貼文/Reel (${postPk}) 已經在其他任務發送過推坑留言，攔截重複發送！`)
+          continue
+        }
+        const botUserLower = String(mcpSvc?.loginStatus?.username || mcpSvc?.config?.username || '').replace(/^@/, '').trim().toLowerCase()
+        try {
+          const ctxCheck = await mcp.igGetPostContext(postPk, 15)
+          const existingComments: any[] = ctxCheck?.comments || []
+          const alreadyCommented = existingComments.some((c: any) => {
+            const cu = String(c.user?.username || '').toLowerCase()
+            const ct = String(c.text || '').toLowerCase()
+            return (botUserLower && cu === botUserLower) || (master && ct.includes(`@${master.toLowerCase()}`))
+          })
+          if (alreadyCommented) {
+            log(`[ScrollDuty] ⏭️ 偵測到貼文/Reel (${postPk}) 留言區已有機器人或 @${master} 的推坑紀錄，永久標記並跳過重複發送！`)
+            ledger.markSeen(post, true)
+            continue
+          }
+        } catch {}
         // @ 前進行最後確認檢查 (Pre-mention Verification)
         if (!evalRes.commentText || !evalRes.commentText.includes(master)) {
           log(`[ScrollDuty] ⚠️ 推坑語句缺少 @${master}，自動補上主人名稱`)
@@ -678,7 +698,7 @@ export async function executeScrollRound(
               commentRes.error || 'Instagram 頻率風控阻擋'
             )
             log(`[ScrollDuty] 🚨 偵測到風控或熔斷保護，停止後續推坑！`)
-            ledger.markSeen(postPk, true)
+            ledger.markSeen(post, true)
             break
           }
 
@@ -717,11 +737,11 @@ export async function executeScrollRound(
             recommendations.push(recItem)
           } else {
             log(`[ScrollDuty] 留言發布失敗: ${commentRes?.error || '未知原因'}`)
-            ledger.markSeen(postPk, true)
+            ledger.markSeen(post, true)
           }
         } catch (e: any) {
           log(`[ScrollDuty] 留言異常: ${e.message}`)
-          ledger.markSeen(postPk, true)
+          ledger.markSeen(post, true)
           if (/feedback|action block|checkpoint|rate limit/i.test(e.message)) {
             ledger.triggerCooldown(config.cooldownOnBlockMinutes || 30, e.message)
             break
@@ -729,11 +749,11 @@ export async function executeScrollRound(
         }
       } else {
         log(`[ScrollDuty] 今日推薦已達上限 (${cap}則) 或未配置主人帳號，僅標記值得並記錄日報。`)
-        ledger.markSeen(postPk, true)
+        ledger.markSeen(post, true)
       }
     } else {
       log(`[ScrollDuty] ⏭️ 未通過內容審核: ${evalRes.rejectionReason || '評分未達標準'}`)
-      ledger.markSeen(postPk, false)
+      ledger.markSeen(post, false)
     }
   }
 
