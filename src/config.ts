@@ -4,6 +4,9 @@
 
 export interface InstagramScrollConfig {
   masterUsername?: string
+  fuzzySearchEnabled?: boolean
+  fuzzyKeywords?: string[]
+  tagSearchEnabled?: boolean
   interestTags?: string[]
   // === 用戶喜歡內容與偏好 ===
   userInterests?: string
@@ -29,11 +32,15 @@ export interface InstagramScrollConfig {
 
 export const defaultScrollConfig: InstagramScrollConfig = {
   masterUsername: '',
-  interestTags: ['ai', 'deepseek', 'coding', 'tech', 'gadgets'],
+  fuzzySearchEnabled: true,
+  fuzzyKeywords: ['art', 'deepseek', 'coding', 'kemono', 'tech'],
+  tagSearchEnabled: false,
+  interestTags: ['art', 'deepseek', 'coding', 'kemono', 'tech'],
   userInterests:
-    '專注於前沿 AI 技術 (LLM, Agent, 開源模型)、全端與前端架構、優質開源專案、高效率開發工具、優質 UI/UX 設計或深度乾貨技術解析。偏好乾貨分享、實踐案例與原創見解，不喜歡空洞無物、純蹭熱度、打廣告或純娛樂搞笑的內容。',
+    '專注於真實人類原創手繪藝術 (插畫、Kemono、角色設計)、前沿軟體技術 (LLM 架構、Agent、開源專案)、全端與前端開發、高效率工具或深度技術解析。偏好真實人類原創作品與實踐乾貨，嚴格排除任何 AI 生成的影片、AI 動畫、AI 繪圖/算圖或 AI 生成的農場文章！',
   positiveKeywords: [
-    'ai',
+    'art',
+    'kemono',
     'deepseek',
     'agent',
     'coding',
@@ -76,6 +83,21 @@ export const defaultScrollConfig: InstagramScrollConfig = {
     '暴富',
     '躺平',
     '加盟',
+    'AI生成',
+    'AI影片',
+    'AI動畫',
+    'AI繪圖',
+    'AI文章',
+    'AIGC',
+    'Midjourney',
+    'Stable Diffusion',
+    'Sora',
+    'Runway',
+    'Kling',
+    '可靈',
+    '即夢',
+    'AI配音',
+    'AI美女',
   ],
   minCaptionLength: 30,
   requireBodyMatch: true,
@@ -119,9 +141,13 @@ function parseListValue(val: any, fallback: string[] = []): string[] {
 
 export function sanitizeScrollConfig(raw: any): InstagramScrollConfig {
   const c = raw || {}
+  const parsedTags = parseListValue(c.interestTags, defaultScrollConfig.interestTags || [])
   return {
     masterUsername: unwrapScrollValue(c.masterUsername, defaultScrollConfig.masterUsername || ''),
-    interestTags: parseListValue(c.interestTags, defaultScrollConfig.interestTags || []),
+    fuzzySearchEnabled: unwrapScrollValue(c.fuzzySearchEnabled, defaultScrollConfig.fuzzySearchEnabled ?? true),
+    fuzzyKeywords: parseListValue(c.fuzzyKeywords, parsedTags.length > 0 ? parsedTags : (defaultScrollConfig.fuzzyKeywords || [])),
+    tagSearchEnabled: unwrapScrollValue(c.tagSearchEnabled, defaultScrollConfig.tagSearchEnabled ?? false),
+    interestTags: parsedTags,
     userInterests: unwrapScrollValue(c.userInterests, defaultScrollConfig.userInterests || ''),
     positiveKeywords: parseListValue(c.positiveKeywords, defaultScrollConfig.positiveKeywords || []),
     negativeKeywords: parseListValue(c.negativeKeywords, defaultScrollConfig.negativeKeywords || []),
@@ -148,10 +174,22 @@ export function buildScrollConfigSchema(z: any) {
       .string()
       .default('')
       .description('主人的 Instagram 使用者名稱 (發現好文時將在留言區 @主人推薦)'),
+    fuzzySearchEnabled: z
+      .boolean()
+      .default(true)
+      .description('是否啟用模糊搜尋探索貼文 (預設開啟，解決單純 Tags 搜尋抓到 0 則貼文的問題)'),
+    fuzzyKeywords: z
+      .array(z.string())
+      .default(['ai', 'deepseek', 'coding', 'tech', 'gadgets'])
+      .description('模糊搜尋關鍵字清單 (結合綜合 SERP、Reels 搜尋與相關創作者貼文)'),
+    tagSearchEnabled: z
+      .boolean()
+      .default(false)
+      .description('是否啟用主題標籤 #Tag 搜尋 (預設關閉，保留並可用按鈕隨時開關)'),
     interestTags: z
       .array(z.string())
       .default(['ai', 'deepseek', 'coding', 'tech', 'gadgets'])
-      .description('探索的主題標籤清單 (僅用於初步探索抓取，不作為推薦唯一判斷依據)'),
+      .description('探索的主題標籤清單 (保留設定，當開啟 Tags 搜尋按鈕時使用)'),
     userInterests: z
       .string()
       .default(defaultScrollConfig.userInterests!)

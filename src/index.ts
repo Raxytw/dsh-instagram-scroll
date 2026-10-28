@@ -161,7 +161,15 @@ export function apply(ctx: any, userConfig: Partial<InstagramScrollConfig> = {})
 
       // 讀取設定
       if (req.method === 'GET' && pathname === '/api/instagram/scroll/config') {
-        return sendJson(res, 200, { ok: true, config: sanitizeScrollConfig(activeConfig) })
+        const svc = getSharedMcpService() || (globalThis as any).__DSH_INSTAGRAM_MCP__
+        const inheritedMaster = svc?.config?.masterUsername || activeConfig.masterUsername || ''
+        return sendJson(res, 200, {
+          ok: true,
+          config: sanitizeScrollConfig({
+            ...activeConfig,
+            masterUsername: inheritedMaster,
+          }),
+        })
       }
 
       // 儲存設定
@@ -169,7 +177,15 @@ export function apply(ctx: any, userConfig: Partial<InstagramScrollConfig> = {})
         const newCfg = await readBody(req)
         saveConfig(newCfg)
         setupScheduler()
-        return sendJson(res, 200, { ok: true, config: sanitizeScrollConfig(activeConfig) })
+        const svc = getSharedMcpService() || (globalThis as any).__DSH_INSTAGRAM_MCP__
+        const inheritedMaster = svc?.config?.masterUsername || activeConfig.masterUsername || ''
+        return sendJson(res, 200, {
+          ok: true,
+          config: sanitizeScrollConfig({
+            ...activeConfig,
+            masterUsername: inheritedMaster,
+          }),
+        })
       }
 
       // 讀取今日狀態與推坑數據
@@ -180,8 +196,10 @@ export function apply(ctx: any, userConfig: Partial<InstagramScrollConfig> = {})
         const isReady = Boolean(client && client.ready)
         const account =
           mcpLogin?.username ||
+          svc?.config?.username ||
           (mcpLogin?.message?.match(/@([^\s)]+)/)?.[1]) ||
           (isReady ? '已連線' : '')
+        const masterUsername = svc?.config?.masterUsername || activeConfig.masterUsername || ''
 
         return sendJson(res, 200, {
           ok: true,
@@ -189,6 +207,7 @@ export function apply(ctx: any, userConfig: Partial<InstagramScrollConfig> = {})
           inheritedSession: true,
           loginStatus: mcpLogin || (isReady ? { ok: true, message: 'FastMCP 運行中', username: account } : null),
           mcpAccount: account,
+          masterUsername,
           dailyStats: ledger.getDailyStats(),
         })
       }

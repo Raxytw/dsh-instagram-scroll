@@ -539,9 +539,13 @@ window.__ModuleLoader__.load({
 
     const normalizeScrollConfig = (raw) => {
       const c = (raw && typeof raw === 'object' && !Array.isArray(raw)) ? raw : {}
+      const baseTags = cleanArr(c.interestTags, ['art', 'deepseek', 'coding', 'kemono', 'tech'])
       return {
         masterUsername: cleanStr(c.masterUsername, ''),
-        interestTags: cleanArr(c.interestTags, ['ai', 'deepseek', 'coding', 'tech', 'gadgets']),
+        fuzzySearchEnabled: cleanBool(c.fuzzySearchEnabled, true),
+        fuzzyKeywords: cleanArr(c.fuzzyKeywords, baseTags),
+        tagSearchEnabled: cleanBool(c.tagSearchEnabled, false),
+        interestTags: baseTags,
         userInterests: cleanStr(
           c.userInterests,
           '專注於前沿 AI 技術 (LLM, Agent, 開源模型)、全端與前端架構、優質開源專案、高效率開發工具、優質 UI/UX 設計或深度乾貨技術解析。偏好乾貨分享、實踐案例與原創見解，不喜歡空洞無物、純蹭熱度、打廣告或純娛樂搞笑的內容。'
@@ -550,7 +554,7 @@ window.__ModuleLoader__.load({
           'ai', 'deepseek', 'agent', 'coding', '技術', '前端', '後端', '架構', '開源', '教學', '程式', '開發', '模型', 'github', 'prompt', '演算法', '工具', '實戰', '乾貨',
         ]),
         negativeKeywords: cleanArr(c.negativeKeywords, [
-          '互粉', '代購', '博彩', '運彩', '兼職', '抽獎', '免費領', '私訊', '點擊連結', '主頁連結', '減肥', '微商', '外匯', '虛擬幣', '心靈雞湯', '穿搭', '搞笑', '自拍', '八卦', '暴富', '躺平', '加盟',
+          '互粉', '代購', '博彩', '運彩', '兼職', '抽獎', '免費領', '私訊', '點擊連結', '主頁連結', '減肥', '微商', '外匯', '虛擬幣', '心靈雞湯', '穿搭', '搞笑', '自拍', '八卦', '暴富', '躺平', '加盟', 'AI生成', 'AI影片', 'AI動畫', 'AI繪圖', 'AI文章', 'AIGC', 'Midjourney', 'Stable Diffusion', 'Sora', 'Runway', 'Kling', '可靈', '即夢', 'AI配音', 'AI美女',
         ]),
         minCaptionLength: cleanNum(c.minCaptionLength, 30),
         requireBodyMatch: cleanBool(c.requireBodyMatch, true),
@@ -584,6 +588,7 @@ window.__ModuleLoader__.load({
       const [msg, setMsg] = useState(null)
 
       // 獨立字串狀態：解決 input 鍵入逗號與空格被 React 重新格式化吃掉的問題
+      const [fuzzyWordsText, setFuzzyWordsText] = useState('')
       const [tagsInputText, setTagsInputText] = useState('')
       const [positiveWordsText, setPositiveWordsText] = useState('')
       const [negativeWordsText, setNegativeWordsText] = useState('')
@@ -610,6 +615,7 @@ window.__ModuleLoader__.load({
           if (cfgRes?.ok) {
             const loaded = normalizeScrollConfig(cfgRes.config)
             setCfg(loaded)
+            setFuzzyWordsText(loaded.fuzzyKeywords.join(', '))
             setTagsInputText(loaded.interestTags.join(', '))
             setPositiveWordsText(loaded.positiveKeywords.join(', '))
             setNegativeWordsText(loaded.negativeKeywords.join(', '))
@@ -636,6 +642,7 @@ window.__ModuleLoader__.load({
         try {
           const cleanPayload = {
             ...normalizeScrollConfig(cfg),
+            fuzzyKeywords: parseListFromText(fuzzyWordsText, true),
             interestTags: parseListFromText(tagsInputText, true),
             positiveKeywords: parseListFromText(positiveWordsText, false),
             negativeKeywords: parseListFromText(negativeWordsText, false),
@@ -644,6 +651,7 @@ window.__ModuleLoader__.load({
           if (res?.ok) {
             const saved = normalizeScrollConfig(res.config)
             setCfg(saved)
+            setFuzzyWordsText(saved.fuzzyKeywords.join(', '))
             setTagsInputText(saved.interestTags.join(', '))
             setPositiveWordsText(saved.positiveKeywords.join(', '))
             setNegativeWordsText(saved.negativeKeywords.join(', '))
@@ -689,11 +697,23 @@ window.__ModuleLoader__.load({
       const rawAccount =
         status?.mcpAccount ||
         status?.loginStatus?.username ||
+        mcpStatus?.botUsername ||
         mcpStatus?.loginStatus?.username ||
         (mcpStatus?.loginStatus?.message?.match(/@([^\s)]+)/)?.[1]) ||
         (isMcpConnected ? '已連線' : '')
 
-      const displayAccount = rawAccount ? rawAccount.replace(/^@/, '') : ''
+      let cachedMcpAccounts = {}
+      try {
+        cachedMcpAccounts = JSON.parse(localStorage.getItem('dsh_ig_mcp_accounts') || '{}') || {}
+      } catch {}
+      const displayAccount = (cachedMcpAccounts.username || rawAccount || '').replace(/^@/, '')
+      const displayMaster = (
+        cachedMcpAccounts.masterUsername ||
+        mcpStatus?.masterUsername ||
+        status?.masterUsername ||
+        cfg.masterUsername ||
+        ''
+      ).replace(/^@/, '')
 
       return h(
         'div',
@@ -714,7 +734,7 @@ window.__ModuleLoader__.load({
               h(
                 'div',
                 { className: 'ig-scr-brand-sub', style: { display: 'flex', alignItems: 'center', gap: '8px' } },
-                cfg.masterUsername ? `目標主人: @${cfg.masterUsername.replace(/^@/, '')}` : '尚未綁定主人帳號',
+                displayMaster ? `目標主人 (繼承自 MCP): @${displayMaster}` : '尚未於 MCP 設定主人帳號',
                 h('span', { style: { color: 'rgba(255, 255, 255, 0.2)' } }, '|'),
                 isMcpConnected
                   ? h(
@@ -905,7 +925,7 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'ig-scr-section-desc' }, '設定主人的 Instagram 帳號名與感興趣的標籤領域，AI 將依此進行嚴格內容篩選。')
               ),
 
-              // MCP Session 來源提示
+              // MCP Session 與主人帳號來源提示 (直接繼承自 MCP，無需重複輸入)
               h(
                 'div',
                 {
@@ -913,35 +933,30 @@ window.__ModuleLoader__.load({
                     background: 'rgba(59, 130, 246, 0.06)',
                     border: '1px solid rgba(59, 130, 246, 0.2)',
                     borderRadius: '8px',
-                    padding: '10px 14px',
+                    padding: '12px 14px',
                     fontSize: '12px',
                     color: '#93c5fd',
                     display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
+                    flexDirection: 'column',
+                    gap: '6px',
                   },
                 },
-                h(Icon.Sparkles, { size: 14 }),
                 h(
-                  'span',
-                  null,
-                  isMcpConnected
-                    ? `已沿用 @luoyi-dsh/instagram-mcp 的登入會話 (@${displayAccount || '已授權'})，本外掛無需填寫帳密。`
-                    : '本外掛無需輸入帳密，直接沿用依賴的 dsh-instagram-mcp 獲取之 Session。目前 MCP 尚未登入，請先至 MCP 面板完成登入。'
+                  'div',
+                  { style: { display: 'flex', alignItems: 'center', gap: '8px', fontWeight: 600 } },
+                  h(Icon.Sparkles, { size: 14 }),
+                  h(
+                    'span',
+                    null,
+                    '機器人與主人帳號已統一由 dsh-instagram-mcp 管理，本外掛無需重複輸入'
+                  )
+                ),
+                h(
+                  'div',
+                  { style: { display: 'flex', flexWrap: 'wrap', gap: '16px', color: '#e2e8f0', paddingLeft: '22px' } },
+                  h('span', null, `🤖 機器人帳號: ${displayAccount ? `@${displayAccount}` : '尚未於 MCP 設定'}`),
+                  h('span', null, `🎯 主人帳號 (推坑 @ 對象): ${displayMaster ? `@${displayMaster}` : '尚未於 MCP 設定'}`)
                 )
-              ),
-
-              h(
-                'div',
-                { className: 'ig-scr-field' },
-                h('label', { className: 'ig-scr-label' }, '🎯 主人 Instagram 帳號 (Master Username)'),
-                h('input', {
-                  className: 'ig-scr-input',
-                  value: cleanStr(cfg.masterUsername),
-                  placeholder: '例如 your_main_account (可不帶 @)',
-                  onChange: (e) => updateField('masterUsername', e.target.value.replace(/^@/, '').trim()),
-                }),
-                h('div', { className: 'ig-scr-hint' }, '發現值得推薦的貼文/影片時，會在留言區 @ 此帳號進行推薦')
               ),
 
               // 正文實質內容審查開關
@@ -1035,13 +1050,70 @@ window.__ModuleLoader__.load({
                 h('div', { className: 'ig-scr-hint' }, '命中任一排除詞直接判定不合格，杜絕廣告宣傳、抽獎促銷與無意義廢文')
               ),
 
+              // 模糊搜尋探索開關 (預設開啟)
+              h(
+                'div',
+                { className: 'ig-scr-switch' },
+                h(
+                  'div',
+                  { className: 'ig-scr-switch-text' },
+                  h('div', { className: 'ig-scr-switch-name' }, '🔎 啟用模糊搜尋抓取貼文 (Fuzzy Search — 推薦)'),
+                  h('div', { className: 'ig-scr-hint' }, '結合 Instagram 綜合關鍵字 SERP、Reels 搜尋與相關創作者貼文，解決單純 Tags 搜尋一直抓到 0 則貼文的問題')
+                ),
+                h(
+                  'button',
+                  {
+                    className: `ig-scr-toggle ${cfg.fuzzySearchEnabled !== false ? 'on' : ''}`,
+                    onClick: () => updateField('fuzzySearchEnabled', !(cfg.fuzzySearchEnabled !== false)),
+                  },
+                  h('span', { className: 'ig-scr-toggle-thumb' })
+                )
+              ),
+
+              h(
+                'div',
+                { className: 'ig-scr-field', style: { opacity: cfg.fuzzySearchEnabled !== false ? 1 : 0.6 } },
+                h('label', { className: 'ig-scr-label' }, '🔎 模糊搜尋關鍵字 (Fuzzy Search Keywords)'),
+                h('input', {
+                  className: 'ig-scr-input',
+                  value: fuzzyWordsText,
+                  placeholder: 'ai, deepseek, coding, tech, gadgets',
+                  onChange: (e) => {
+                    const raw = e.target.value
+                    setFuzzyWordsText(raw)
+                    updateField('fuzzyKeywords', parseListFromText(raw, true))
+                  },
+                }),
+                h('div', { className: 'ig-scr-hint' }, '每輪滾動時隨機挑選關鍵字進行綜合模糊搜尋抓取貼文 (支援逗號分隔)')
+              ),
+
+              // 主題標籤搜尋開關 (保留功能，用按鈕開關，預設關閉)
+              h(
+                'div',
+                { className: 'ig-scr-switch' },
+                h(
+                  'div',
+                  { className: 'ig-scr-switch-text' },
+                  h('div', { className: 'ig-scr-switch-name' }, '🏷️ 啟用主題標籤搜尋 (Tags Search — 保留備用)'),
+                  h('div', { className: 'ig-scr-hint' }, '預設關閉（因 IG 官方常限制公開 Hashtag API 返回 0 則貼文）；保留此設定，可隨時點擊按鈕開關')
+                ),
+                h(
+                  'button',
+                  {
+                    className: `ig-scr-toggle ${cfg.tagSearchEnabled ? 'on' : ''}`,
+                    onClick: () => updateField('tagSearchEnabled', !cfg.tagSearchEnabled),
+                  },
+                  h('span', { className: 'ig-scr-toggle-thumb' })
+                )
+              ),
+
               h(
                 'div',
                 { className: 'ig-scr-grid-2' },
                 h(
                   'div',
-                  { className: 'ig-scr-field' },
-                  h('label', { className: 'ig-scr-label' }, '🏷️ 探索主題標籤 (Interest Tags)'),
+                  { className: 'ig-scr-field', style: { opacity: cfg.tagSearchEnabled ? 1 : 0.6 } },
+                  h('label', { className: 'ig-scr-label' }, '🏷️ 探索主題標籤 (Interest Tags — 開啟上方按鈕時生效)'),
                   h('input', {
                     className: 'ig-scr-input',
                     value: tagsInputText,
@@ -1052,7 +1124,7 @@ window.__ModuleLoader__.load({
                       updateField('interestTags', parseListFromText(raw, true))
                     },
                   }),
-                  h('div', { className: 'ig-scr-hint' }, '探索抓取起點標籤 (非推薦唯一標準，支援空格與中英文逗號)')
+                  h('div', { className: 'ig-scr-hint' }, '保留之主題標籤清單 (支援空格與中英文逗號)')
                 ),
                 h(
                   'div',
